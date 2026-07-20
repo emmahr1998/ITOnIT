@@ -1,7 +1,7 @@
 from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
 
@@ -36,12 +36,3 @@ class Base(DeclarativeBase):
     """Base class every ORM model will inherit from."""
 
     pass
-
-
-def get_db() -> Session:
-    """FastAPI dependency that yields a database session and closes it afterwards."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
