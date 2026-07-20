@@ -5,6 +5,7 @@ from app.dependencies.auth import (
     get_user_repository,
     require_roles,
 )
+from app.dependencies.category import get_category_repository, get_category_service
 from app.dependencies.database import get_db
 
 __all__ = [
@@ -14,4 +15,6 @@ __all__ = [
     "get_current_user",
     "get_user_repository",
     "require_roles",
+    "get_category_repository",
+    "get_category_service",
 ]
