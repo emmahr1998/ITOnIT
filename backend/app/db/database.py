@@ -6,7 +6,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from app.core.config import settings
 
 
-def _build_connection_url() -> str:
+def build_connection_url() -> str:
     """Build a SQL Server connection URL for SQLAlchemy + pyodbc."""
     driver = quote_plus(settings.DATABASE_DRIVER)
 
@@ -27,7 +27,7 @@ def _build_connection_url() -> str:
 # create_engine() only prepares the connection pool; it does not connect
 # to SQL Server until a session actually executes a query. This means the
 # app can start even if the database is not reachable yet.
-engine = create_engine(_build_connection_url())
+engine = create_engine(build_connection_url())
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
