@@ -24,7 +24,15 @@ class Settings(BaseSettings):
     DATABASE_PASSWORD: Optional[str] = None
 
     SECRET_KEY: str
+    ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # Optional: used only by app.scripts.seed_initial_data. Admin creation is
+    # skipped entirely when email/password are unset.
+    INITIAL_ADMIN_EMAIL: Optional[str] = None
+    INITIAL_ADMIN_PASSWORD: Optional[str] = None
+    INITIAL_ADMIN_FIRST_NAME: Optional[str] = None
+    INITIAL_ADMIN_LAST_NAME: Optional[str] = None
 
 
 @lru_cache
