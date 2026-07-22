@@ -7,13 +7,14 @@ from app.models.category import Category
 from app.models.enums import TicketStatus
 from app.models.ticket import Ticket
 from app.models.user import User
+from app.services.history_service import HistoryService
 from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidTechnicianAssignmentError,
     TicketNotFoundError,
     TicketService,
 )
-from tests.conftest import FakeTicketRepository, FakeUserRepository
+from tests.conftest import FakeHistoryRepository, FakeTicketRepository, FakeUserRepository
 
 
 def _minimal_repository(tickets: list[Ticket]) -> FakeTicketRepository:
@@ -719,6 +720,9 @@ def test_create_ticket_retries_ticket_number_on_integrity_error(
         ticket_repository=ticket_repo,
         category_repository=category_repo,
         user_repository=FakeUserRepository([active_employee_user]),
+        history_service=HistoryService(
+            db=_NoopSession(), history_repository=FakeHistoryRepository()
+        ),
     )
 
     payload = TicketCreate(

@@ -10,6 +10,7 @@ from app.repositories.category import CategoryRepository
 from app.repositories.ticket import TicketRepository
 from app.repositories.user import UserRepository
 from app.schemas.ticket import TicketCreate, TicketUpdate
+from app.services.history_service import HistoryService
 
 TECHNICIAN_ROLE_NAME = "Technician"
 _MANAGE_ROLE_NAMES = ("Manager", "Administrator")
@@ -74,6 +75,7 @@ class TicketService:
         ticket_repository: TicketRepository | None = None,
         category_repository: CategoryRepository | None = None,
         user_repository: UserRepository | None = None,
+        history_service: HistoryService | None = None,
     ) -> None:
         self._db = db
         self._ticket_repository = (
@@ -84,6 +86,9 @@ class TicketService:
         )
         self._user_repository = (
             user_repository if user_repository is not None else UserRepository(db)
+        )
+        self._history_service = (
+            history_service if history_service is not None else HistoryService(db)
         )
 
     # ---- ownership -----------------------------------------------------
@@ -162,6 +167,9 @@ class TicketService:
             ticket.assigned_technician = None
             try:
                 self._ticket_repository.create(ticket)
+                self._history_service.record(
+                    ticket.id, current_user, "ticket_created", None, ticket.ticket_number
+                )
                 self._db.commit()
                 return ticket
             except IntegrityError:
@@ -186,11 +194,36 @@ class TicketService:
         if category is None:
             raise TicketCategoryNotFoundError
 
-        ticket.title = payload.title
-        ticket.description = payload.description
-        ticket.category_id = payload.category_id
+        # One history entry per field that actually changed - "Ticket
+        # updated"/"Category changed"/"Priority changed" from the business
+        # rules are all realized this way, rather than one generic entry
+        # that couldn't hold more than one field's old/new value anyway.
+        if ticket.title != payload.title:
+            self._history_service.record(
+                ticket.id, current_user, "title", ticket.title, payload.title
+            )
+            ticket.title = payload.title
+        if ticket.description != payload.description:
+            self._history_service.record(
+                ticket.id, current_user, "description", ticket.description, payload.description
+            )
+            ticket.description = payload.description
+        if ticket.category_id != payload.category_id:
+            self._history_service.record(
+                ticket.id, current_user, "category", ticket.category.name, category.name
+            )
+            ticket.category_id = payload.category_id
         ticket.category = category
-        ticket.priority = payload.priority
+        if ticket.priority != payload.priority:
+            self._history_service.record(
+                ticket.id,
+                current_user,
+                "priority",
+                ticket.priority.value,
+                payload.priority.value,
+            )
+            ticket.priority = payload.priority
+
         self._ticket_repository.update(ticket)
         self._db.commit()
         return ticket
@@ -203,7 +236,9 @@ class TicketService:
         self._ticket_repository.delete(ticket)
         self._db.commit()
 
-    def assign_technician(self, ticket_id: int, technician_id: int) -> Ticket:
+    def assign_technician(
+        self, current_user: User, ticket_id: int, technician_id: int
+    ) -> Ticket:
         # Role gate (Manager/Administrator only) is enforced at the route.
         ticket = self._ticket_repository.get_by_id(ticket_id)
         if ticket is None:
@@ -219,10 +254,26 @@ class TicketService:
         if not technician.is_active:
             raise InvalidTechnicianAssignmentError("Technician is not active")
 
+        previous_technician_name = (
+            f"{ticket.assigned_technician.first_name} {ticket.assigned_technician.last_name}"
+            if ticket.assigned_technician is not None
+            else None
+        )
         ticket.assigned_technician_id = technician.id
         ticket.assigned_technician = technician
+        self._history_service.record(
+            ticket.id,
+            current_user,
+            "assigned_technician",
+            previous_technician_name,
+            f"{technician.first_name} {technician.last_name}",
+        )
         if ticket.status == TicketStatus.NEW:
+            old_status = ticket.status.value
             ticket.status = TicketStatus.ASSIGNED
+            self._history_service.record(
+                ticket.id, current_user, "status", old_status, ticket.status.value
+            )
         self._ticket_repository.update(ticket)
         self._db.commit()
         return ticket
@@ -248,6 +299,7 @@ class TicketService:
                 f"Cannot transition ticket from {ticket.status.value} to {new_status.value}"
             )
 
+        old_status = ticket.status.value
         ticket.status = new_status
         now = datetime.now(timezone.utc)
         if new_status == TicketStatus.RESOLVED:
@@ -255,6 +307,9 @@ class TicketService:
         elif new_status == TicketStatus.CLOSED:
             ticket.closed_at = now
 
+        self._history_service.record(
+            ticket.id, current_user, "status", old_status, new_status.value
+        )
         self._ticket_repository.update(ticket)
         self._db.commit()
         return ticket
