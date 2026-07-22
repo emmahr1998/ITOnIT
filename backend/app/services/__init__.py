@@ -5,6 +5,15 @@ from app.services.category_service import (
     CategoryNotFoundError,
     CategoryService,
 )
+from app.services.ticket_service import (
+    InvalidStatusTransitionError,
+    InvalidTechnicianAssignmentError,
+    TicketCategoryNotFoundError,
+    TicketNotEditableError,
+    TicketNotFoundError,
+    TicketPermissionError,
+    TicketService,
+)
 
 __all__ = [
     "AuthService",
@@ -13,4 +22,11 @@ __all__ = [
     "CategoryNotFoundError",
     "CategoryNameConflictError",
     "CategoryInUseError",
+    "TicketService",
+    "TicketNotFoundError",
+    "TicketCategoryNotFoundError",
+    "TicketPermissionError",
+    "TicketNotEditableError",
+    "InvalidTechnicianAssignmentError",
+    "InvalidStatusTransitionError",
 ]
