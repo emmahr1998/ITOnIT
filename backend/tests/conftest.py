@@ -8,15 +8,21 @@ from sqlalchemy.exc import IntegrityError
 from app.core.security import create_access_token, hash_password
 from app.dependencies.auth import get_auth_service, get_user_repository
 from app.dependencies.category import get_category_service
+from app.dependencies.comment import get_comment_service
+from app.dependencies.history import get_history_service
 from app.dependencies.ticket import get_ticket_service
 from app.main import app
 from app.models.category import Category
+from app.models.comment import Comment
 from app.models.enums import TicketPriority, TicketStatus
 from app.models.role import Role
 from app.models.ticket import Ticket
+from app.models.ticket_history import TicketHistory
 from app.models.user import User
 from app.services.auth_service import AuthService
 from app.services.category_service import CategoryService
+from app.services.comment_service import CommentService
+from app.services.history_service import HistoryService
 from app.services.ticket_service import TicketService
 
 ADMIN_PASSWORD = "CorrectHorseBattery1!"
@@ -146,13 +152,62 @@ class FakeTicketRepository:
         return sum(1 for t in self._by_id.values() if t.ticket_number.startswith(prefix))
 
 
+class FakeCommentRepository:
+    """In-memory stand-in for CommentRepository. Same rationale as FakeTicketRepository."""
+
+    def __init__(self, comments: list[Comment] | None = None) -> None:
+        self._by_id = {comment.id: comment for comment in (comments or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+
+    def get_by_id(self, id_: int) -> Comment | None:
+        return self._by_id.get(id_)
+
+    def list_for_ticket(self, ticket_id: int) -> list[Comment]:
+        return [c for c in self._by_id.values() if c.ticket_id == ticket_id]
+
+    def create(self, obj: Comment) -> Comment:
+        obj.id = self._next_id
+        self._next_id += 1
+        # A real INSERT would populate this via CreatedAtMixin's
+        # server_default=func.now(); updated_at stays None until an edit,
+        # matching the model exactly (no server default/onupdate on it).
+        obj.created_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
+    def update(self, obj: Comment) -> Comment:
+        self._by_id[obj.id] = obj
+        return obj
+
+    def delete(self, obj: Comment) -> None:
+        self._by_id.pop(obj.id, None)
+
+
+class FakeHistoryRepository:
+    """In-memory stand-in for HistoryRepository. Same rationale as the others."""
+
+    def __init__(self) -> None:
+        self._entries: list[TicketHistory] = []
+        self._next_id = 1
+
+    def create(self, obj: TicketHistory) -> TicketHistory:
+        obj.id = self._next_id
+        self._next_id += 1
+        obj.created_at = datetime.now(timezone.utc)
+        self._entries.append(obj)
+        return obj
+
+    def list_for_ticket(self, ticket_id: int) -> list[TicketHistory]:
+        return [e for e in self._entries if e.ticket_id == ticket_id]
+
+
 class FakeSession:
     """No-op stand-in for the transaction-boundary calls the services make.
 
-    CategoryService/TicketService own commit()/rollback() (repositories
-    never commit), so a fake service needs a fake session to call those on -
-    this just swallows both, since the fake repositories already persist
-    in memory.
+    CategoryService/TicketService/CommentService own commit()/rollback()
+    (repositories never commit), so a fake service needs a fake session to
+    call those on - this just swallows both, since the fake repositories
+    already persist in memory.
     """
 
     def commit(self) -> None:
@@ -360,6 +415,41 @@ def assigned_ticket(
 
 
 @pytest.fixture
+def employee_comment(employee_ticket: Ticket, active_employee_user: User) -> Comment:
+    """A comment authored by active_employee_user on their own ticket."""
+    comment = Comment(
+        id=1,
+        ticket_id=employee_ticket.id,
+        author_user_id=active_employee_user.id,
+        content="Initial comment from the employee.",
+        created_at=datetime.now(timezone.utc),
+    )
+    comment.author = active_employee_user
+    return comment
+
+
+@pytest.fixture
+def assigned_ticket_comment(assigned_ticket: Ticket, active_employee_user: User) -> Comment:
+    """A comment on assigned_ticket, authored by the employee who created it.
+
+    active_technician_user can also view assigned_ticket (it's assigned to
+    them), so this fixture lets tests distinguish "blocked at the ticket
+    view gate" from "blocked at comment ownership specifically" - both the
+    employee and the technician can see this comment, but only the employee
+    authored it.
+    """
+    comment = Comment(
+        id=2,
+        ticket_id=assigned_ticket.id,
+        author_user_id=active_employee_user.id,
+        content="Employee's comment on the assigned ticket.",
+        created_at=datetime.now(timezone.utc),
+    )
+    comment.author = active_employee_user
+    return comment
+
+
+@pytest.fixture
 def user_repository(
     active_admin_user: User,
     inactive_user: User,
@@ -397,6 +487,18 @@ def ticket_repository(
 
 
 @pytest.fixture
+def comment_repository(
+    employee_comment: Comment, assigned_ticket_comment: Comment
+) -> FakeCommentRepository:
+    return FakeCommentRepository([employee_comment, assigned_ticket_comment])
+
+
+@pytest.fixture
+def history_repository() -> FakeHistoryRepository:
+    return FakeHistoryRepository()
+
+
+@pytest.fixture
 def auth_headers() -> Callable[[User], dict[str, str]]:
     """Build an Authorization header for a given (unsaved) fixture user."""
 
@@ -412,7 +514,14 @@ def client(
     user_repository: FakeUserRepository,
     category_repository: FakeCategoryRepository,
     ticket_repository: FakeTicketRepository,
+    comment_repository: FakeCommentRepository,
+    history_repository: FakeHistoryRepository,
 ) -> Iterator[TestClient]:
+    # One shared HistoryService instance so ticket-mutation history and
+    # comment-mutation history both land in the same store - a single
+    # GET /history call in a test can then observe entries from both.
+    history_service = HistoryService(db=FakeSession(), history_repository=history_repository)
+
     app.dependency_overrides[get_user_repository] = lambda: user_repository
     app.dependency_overrides[get_auth_service] = lambda: AuthService(
         db=None, user_repository=user_repository
@@ -425,7 +534,14 @@ def client(
         ticket_repository=ticket_repository,
         category_repository=category_repository,
         user_repository=user_repository,
+        history_service=history_service,
     )
+    app.dependency_overrides[get_comment_service] = lambda: CommentService(
+        db=FakeSession(),
+        comment_repository=comment_repository,
+        history_service=history_service,
+    )
+    app.dependency_overrides[get_history_service] = lambda: history_service
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

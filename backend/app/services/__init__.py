@@ -5,6 +5,12 @@ from app.services.category_service import (
     CategoryNotFoundError,
     CategoryService,
 )
+from app.services.comment_service import (
+    CommentNotFoundError,
+    CommentPermissionError,
+    CommentService,
+)
+from app.services.history_service import HistoryService
 from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidTechnicianAssignmentError,
@@ -29,4 +35,8 @@ __all__ = [
     "TicketNotEditableError",
     "InvalidTechnicianAssignmentError",
     "InvalidStatusTransitionError",
+    "CommentService",
+    "CommentNotFoundError",
+    "CommentPermissionError",
+    "HistoryService",
 ]
