@@ -1,23 +1,31 @@
 from collections.abc import Callable, Iterator
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app.core.security import create_access_token, hash_password
 from app.dependencies.auth import get_auth_service, get_user_repository
 from app.dependencies.category import get_category_service
+from app.dependencies.ticket import get_ticket_service
 from app.main import app
 from app.models.category import Category
+from app.models.enums import TicketPriority, TicketStatus
 from app.models.role import Role
+from app.models.ticket import Ticket
 from app.models.user import User
 from app.services.auth_service import AuthService
 from app.services.category_service import CategoryService
+from app.services.ticket_service import TicketService
 
 ADMIN_PASSWORD = "CorrectHorseBattery1!"
 INACTIVE_PASSWORD = "SomePassword1!"
 EMPLOYEE_PASSWORD = "EmployeePass1!"
 TECHNICIAN_PASSWORD = "TechnicianPass1!"
 MANAGER_PASSWORD = "ManagerPass1!"
+EMPLOYEE_2_PASSWORD = "EmployeeTwoPass1!"
+TECHNICIAN_2_PASSWORD = "TechnicianTwoPass1!"
 
 
 class FakeUserRepository:
@@ -78,12 +86,73 @@ class FakeCategoryRepository:
         return category_id in self.referenced_category_ids
 
 
-class FakeSession:
-    """No-op stand-in for the transaction-boundary calls CategoryService makes.
+class FakeTicketRepository:
+    """In-memory stand-in for TicketRepository. Same rationale as FakeCategoryRepository."""
 
-    CategoryService owns commit()/rollback() (repositories never commit),
-    so a fake service needs a fake session to call those on - this just
-    swallows both, since FakeCategoryRepository already persists in memory.
+    def __init__(self, tickets: list[Ticket] | None = None) -> None:
+        self._by_id = {ticket.id: ticket for ticket in (tickets or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+        self.fail_next_create = False
+
+    def get_by_id(self, id_: int) -> Ticket | None:
+        return self._by_id.get(id_)
+
+    def get_with_filters(
+        self,
+        *,
+        status: TicketStatus | None = None,
+        priority: TicketPriority | None = None,
+        category_id: int | None = None,
+        created_by_user_id: int | None = None,
+        assigned_technician_id: int | None = None,
+    ) -> list[Ticket]:
+        results = list(self._by_id.values())
+        if status is not None:
+            results = [t for t in results if t.status == status]
+        if priority is not None:
+            results = [t for t in results if t.priority == priority]
+        if category_id is not None:
+            results = [t for t in results if t.category_id == category_id]
+        if created_by_user_id is not None:
+            results = [t for t in results if t.created_by_user_id == created_by_user_id]
+        if assigned_technician_id is not None:
+            results = [t for t in results if t.assigned_technician_id == assigned_technician_id]
+        return results
+
+    def create(self, obj: Ticket) -> Ticket:
+        if self.fail_next_create:
+            self.fail_next_create = False
+            raise IntegrityError("insert", {}, Exception("duplicate ticket_number"))
+        obj.id = self._next_id
+        self._next_id += 1
+        # A real INSERT would populate these via server_default=func.now();
+        # an unsaved Python object has neither until "written".
+        now = datetime.now(timezone.utc)
+        obj.created_at = now
+        obj.updated_at = now
+        self._by_id[obj.id] = obj
+        return obj
+
+    def update(self, obj: Ticket) -> Ticket:
+        obj.updated_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
+    def delete(self, obj: Ticket) -> None:
+        self._by_id.pop(obj.id, None)
+
+    def count_for_year(self, year: int) -> int:
+        prefix = f"IT-{year}-"
+        return sum(1 for t in self._by_id.values() if t.ticket_number.startswith(prefix))
+
+
+class FakeSession:
+    """No-op stand-in for the transaction-boundary calls the services make.
+
+    CategoryService/TicketService own commit()/rollback() (repositories
+    never commit), so a fake service needs a fake session to call those on -
+    this just swallows both, since the fake repositories already persist
+    in memory.
     """
 
     def commit(self) -> None:
@@ -189,6 +258,40 @@ def active_manager_user(manager_role: Role) -> User:
 
 
 @pytest.fixture
+def active_employee_user_2(employee_role: Role) -> User:
+    """A second employee, distinct from active_employee_user - needed to
+    prove employees cannot see/edit each other's tickets."""
+    user = User(
+        id=6,
+        first_name="Eli",
+        last_name="EmployeeTwo",
+        email="employee2@itonit.test",
+        password_hash=hash_password(EMPLOYEE_2_PASSWORD),
+        role_id=employee_role.id,
+        is_active=True,
+    )
+    user.role = employee_role
+    return user
+
+
+@pytest.fixture
+def active_technician_user_2(technician_role: Role) -> User:
+    """A second technician, distinct from active_technician_user - needed to
+    prove technicians cannot see/edit tickets assigned to someone else."""
+    user = User(
+        id=7,
+        first_name="Tia",
+        last_name="TechnicianTwo",
+        email="technician2@itonit.test",
+        password_hash=hash_password(TECHNICIAN_2_PASSWORD),
+        role_id=technician_role.id,
+        is_active=True,
+    )
+    user.role = technician_role
+    return user
+
+
+@pytest.fixture
 def admin_password() -> str:
     return ADMIN_PASSWORD
 
@@ -209,12 +312,62 @@ def software_category() -> Category:
 
 
 @pytest.fixture
+def employee_ticket(hardware_category: Category, active_employee_user: User) -> Ticket:
+    """A brand-new ticket, owned by active_employee_user, not yet assigned."""
+    now = datetime.now(timezone.utc)
+    ticket = Ticket(
+        id=1,
+        ticket_number="IT-2026-000001",
+        title="Laptop will not boot",
+        description="Screen stays black after pressing the power button.",
+        status=TicketStatus.NEW,
+        priority=TicketPriority.MEDIUM,
+        category_id=hardware_category.id,
+        created_by_user_id=active_employee_user.id,
+        assigned_technician_id=None,
+        created_at=now,
+        updated_at=now,
+    )
+    ticket.category = hardware_category
+    ticket.created_by = active_employee_user
+    ticket.assigned_technician = None
+    return ticket
+
+
+@pytest.fixture
+def assigned_ticket(
+    software_category: Category, active_employee_user: User, active_technician_user: User
+) -> Ticket:
+    """A ticket already assigned to active_technician_user and in progress."""
+    now = datetime.now(timezone.utc)
+    ticket = Ticket(
+        id=2,
+        ticket_number="IT-2026-000002",
+        title="VPN disconnects repeatedly",
+        description="The VPN client drops the connection every few minutes.",
+        status=TicketStatus.ASSIGNED,
+        priority=TicketPriority.HIGH,
+        category_id=software_category.id,
+        created_by_user_id=active_employee_user.id,
+        assigned_technician_id=active_technician_user.id,
+        created_at=now,
+        updated_at=now,
+    )
+    ticket.category = software_category
+    ticket.created_by = active_employee_user
+    ticket.assigned_technician = active_technician_user
+    return ticket
+
+
+@pytest.fixture
 def user_repository(
     active_admin_user: User,
     inactive_user: User,
     active_employee_user: User,
     active_technician_user: User,
     active_manager_user: User,
+    active_employee_user_2: User,
+    active_technician_user_2: User,
 ) -> FakeUserRepository:
     return FakeUserRepository(
         [
@@ -223,6 +376,8 @@ def user_repository(
             active_employee_user,
             active_technician_user,
             active_manager_user,
+            active_employee_user_2,
+            active_technician_user_2,
         ]
     )
 
@@ -232,6 +387,13 @@ def category_repository(
     hardware_category: Category, software_category: Category
 ) -> FakeCategoryRepository:
     return FakeCategoryRepository([hardware_category, software_category])
+
+
+@pytest.fixture
+def ticket_repository(
+    employee_ticket: Ticket, assigned_ticket: Ticket
+) -> FakeTicketRepository:
+    return FakeTicketRepository([employee_ticket, assigned_ticket])
 
 
 @pytest.fixture
@@ -247,7 +409,9 @@ def auth_headers() -> Callable[[User], dict[str, str]]:
 
 @pytest.fixture
 def client(
-    user_repository: FakeUserRepository, category_repository: FakeCategoryRepository
+    user_repository: FakeUserRepository,
+    category_repository: FakeCategoryRepository,
+    ticket_repository: FakeTicketRepository,
 ) -> Iterator[TestClient]:
     app.dependency_overrides[get_user_repository] = lambda: user_repository
     app.dependency_overrides[get_auth_service] = lambda: AuthService(
@@ -255,6 +419,12 @@ def client(
     )
     app.dependency_overrides[get_category_service] = lambda: CategoryService(
         db=FakeSession(), category_repository=category_repository
+    )
+    app.dependency_overrides[get_ticket_service] = lambda: TicketService(
+        db=FakeSession(),
+        ticket_repository=ticket_repository,
+        category_repository=category_repository,
+        user_repository=user_repository,
     )
     with TestClient(app) as test_client:
         yield test_client

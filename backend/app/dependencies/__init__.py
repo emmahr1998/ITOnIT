@@ -7,6 +7,7 @@ from app.dependencies.auth import (
 )
 from app.dependencies.category import get_category_repository, get_category_service
 from app.dependencies.database import get_db
+from app.dependencies.ticket import get_ticket_repository, get_ticket_service
 
 __all__ = [
     "get_db",
@@ -17,4 +18,6 @@ __all__ = [
     "require_roles",
     "get_category_repository",
     "get_category_service",
+    "get_ticket_repository",
+    "get_ticket_service",
 ]
