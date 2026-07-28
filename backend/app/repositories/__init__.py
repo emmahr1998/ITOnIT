@@ -1,3 +1,4 @@
+from app.repositories.attachment import AttachmentRepository
 from app.repositories.base import BaseRepository
 from app.repositories.category import CategoryRepository
 from app.repositories.comment import CommentRepository
@@ -7,6 +8,7 @@ from app.repositories.ticket import TicketRepository
 from app.repositories.user import UserRepository
 
 __all__ = [
+    "AttachmentRepository",
     "BaseRepository",
     "CategoryRepository",
     "CommentRepository",

@@ -19,3 +19,7 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Uploaded attachments - metadata lives in the database, files do not get committed
+storage/attachments/*
+!storage/attachments/.gitkeep

@@ -1,3 +1,8 @@
+from app.services.attachment_service import (
+    AttachmentNotFoundError,
+    AttachmentService,
+    InvalidAttachmentError,
+)
 from app.services.auth_service import AuthService, InvalidCredentialsError
 from app.services.category_service import (
     CategoryInUseError,
@@ -11,6 +16,7 @@ from app.services.comment_service import (
     CommentService,
 )
 from app.services.history_service import HistoryService
+from app.services.storage_service import StorageService
 from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidTechnicianAssignmentError,
@@ -39,4 +45,8 @@ __all__ = [
     "CommentNotFoundError",
     "CommentPermissionError",
     "HistoryService",
+    "StorageService",
+    "AttachmentService",
+    "AttachmentNotFoundError",
+    "InvalidAttachmentError",
 ]

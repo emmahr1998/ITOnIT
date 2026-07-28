@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     INITIAL_ADMIN_FIRST_NAME: Optional[str] = None
     INITIAL_ADMIN_LAST_NAME: Optional[str] = None
 
+    # Attachments: files live on disk under this path, never in SQL Server.
+    ATTACHMENT_STORAGE_PATH: str = "storage/attachments"
+    MAX_ATTACHMENT_SIZE_BYTES: int = 10 * 1024 * 1024
+
 
 @lru_cache
 def get_settings() -> Settings:
