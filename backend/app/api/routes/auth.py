@@ -2,8 +2,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.dependencies import get_auth_service, get_current_active_user
 from app.models.user import User
-from app.schemas.auth import CurrentUserResponse, LoginRequest, TokenResponse
-from app.services.auth_service import AuthService, InvalidCredentialsError
+from app.schemas.auth import (
+    CurrentUserResponse,
+    LoginRequest,
+    RefreshRequest,
+    RefreshResponse,
+    TokenResponse,
+)
+from app.services.auth_service import (
+    AuthService,
+    InvalidCredentialsError,
+    InvalidRefreshTokenError,
+)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -12,13 +22,30 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 def login(
     payload: LoginRequest, auth_service: AuthService = Depends(get_auth_service)
 ) -> TokenResponse:
-    """Authenticate with email + password and receive a JWT access token."""
+    """Authenticate with username (or email) + password and receive a JWT
+    access + refresh token pair.
+    """
     try:
-        return auth_service.login(payload.email, payload.password)
+        return auth_service.login(payload.username, payload.password)
     except InvalidCredentialsError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+
+@router.post("/refresh", response_model=RefreshResponse)
+def refresh(
+    payload: RefreshRequest, auth_service: AuthService = Depends(get_auth_service)
+) -> RefreshResponse:
+    """Exchange a valid refresh token for a new access token."""
+    try:
+        return auth_service.refresh_access_token(payload.refresh)
+    except InvalidRefreshTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 

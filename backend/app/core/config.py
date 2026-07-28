@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # Refresh tokens must outlive access tokens - that's the entire point of
+    # having both (a short-lived access token, and a longer-lived one used
+    # only to mint new access tokens without re-entering credentials).
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
     # Optional: used only by app.scripts.seed_initial_data. Admin creation is
     # skipped entirely when email/password are unset.

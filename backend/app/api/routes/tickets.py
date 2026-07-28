@@ -7,17 +7,18 @@ from app.dependencies import (
     get_viewable_ticket,
     require_roles,
 )
-from app.models.enums import TicketPriority, TicketStatus
+from app.models.enums import TicketStatus
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.schemas.comment import CommentCreate, CommentResponse, CommentUpdate
 from app.schemas.history import TicketHistoryResponse
+from app.schemas.response import DataResponse
 from app.schemas.ticket import (
     TicketAssign,
-    TicketCreate,
+    TicketNewCreate,
+    TicketPatch,
     TicketResponse,
     TicketStatusUpdate,
-    TicketUpdate,
 )
 from app.services.comment_service import (
     CommentNotFoundError,
@@ -32,10 +33,16 @@ from app.services.ticket_service import (
     TicketNotEditableError,
     TicketNotFoundError,
     TicketPermissionError,
+    TicketPriorityNotFoundError,
+    TicketRequesterNotFoundError,
     TicketService,
 )
 
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
+
+# Collection endpoints that must live at exactly /ticket-new and
+# /all-tickets (not nested under /tickets) - see flat_router below.
+flat_router = APIRouter(tags=["Tickets"])
 
 _CREATE_ROLES = ("Employee", "Manager", "Administrator")
 _VIEW_ROLES = ("Employee", "Technician", "Manager", "Administrator")
@@ -44,56 +51,25 @@ _ASSIGN_ROLES = ("Manager", "Administrator")
 _STATUS_ROLES = ("Technician", "Manager", "Administrator")
 
 
-@router.get("", response_model=list[TicketResponse])
-def list_tickets(
-    ticket_status: TicketStatus | None = Query(default=None, alias="status"),
-    priority: TicketPriority | None = Query(default=None),
-    category_id: int | None = Query(default=None, alias="category"),
-    created_by: int | None = Query(default=None),
-    assigned_to: int | None = Query(default=None),
-    ticket_service: TicketService = Depends(get_ticket_service),
-    current_user: User = Depends(require_roles(*_VIEW_ROLES)),
-) -> list[TicketResponse]:
-    """Employees automatically see only their own tickets; technicians only
-    their assigned tickets. Managers/Administrators see everything."""
-    tickets = ticket_service.list_tickets(
-        current_user,
-        status=ticket_status,
-        priority=priority,
-        category_id=category_id,
-        created_by=created_by,
-        assigned_to=assigned_to,
-    )
-    return [TicketResponse.model_validate(ticket) for ticket in tickets]
-
-
 @router.get("/{ticket_id}", response_model=TicketResponse)
 def get_ticket(ticket: Ticket = Depends(get_viewable_ticket)) -> TicketResponse:
     return TicketResponse.model_validate(ticket)
 
 
-@router.post("", response_model=TicketResponse, status_code=status.HTTP_201_CREATED)
-def create_ticket(
-    payload: TicketCreate,
-    ticket_service: TicketService = Depends(get_ticket_service),
-    current_user: User = Depends(require_roles(*_CREATE_ROLES)),
-) -> TicketResponse:
-    try:
-        ticket = ticket_service.create_ticket(current_user, payload)
-    except TicketCategoryNotFoundError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Category not found") from exc
-    return TicketResponse.model_validate(ticket)
-
-
-@router.put("/{ticket_id}", response_model=TicketResponse)
-def update_ticket(
+@router.patch("/{ticket_id}", response_model=DataResponse[TicketResponse])
+def patch_ticket(
     ticket_id: int,
-    payload: TicketUpdate,
+    payload: TicketPatch,
     ticket_service: TicketService = Depends(get_ticket_service),
     current_user: User = Depends(require_roles(*_VIEW_ROLES)),
-) -> TicketResponse:
+) -> DataResponse[TicketResponse]:
+    """Partial update of title/description/location/category_id/priority_id.
+
+    Assignment, status, requester, and timestamps stay out of reach here -
+    they're each owned by their own endpoint/mechanism.
+    """
     try:
-        ticket = ticket_service.update_ticket(current_user, ticket_id, payload)
+        ticket = ticket_service.patch_ticket(current_user, ticket_id, payload)
     except TicketNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from exc
     except TicketPermissionError as exc:
@@ -107,7 +83,9 @@ def update_ticket(
         ) from exc
     except TicketCategoryNotFoundError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Category not found") from exc
-    return TicketResponse.model_validate(ticket)
+    except TicketPriorityNotFoundError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Priority not found") from exc
+    return DataResponse(data=TicketResponse.model_validate(ticket), msg="Ticket updated successfully")
 
 
 @router.delete("/{ticket_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -238,3 +216,77 @@ def get_ticket_history(
 ) -> list[TicketHistoryResponse]:
     entries = history_service.list_for_ticket(ticket.id)
     return [TicketHistoryResponse.model_validate(entry) for entry in entries]
+
+
+# ---------------------------------------------------------------------------
+# Flat collection endpoints - must live at exactly /ticket-new and
+# /all-tickets, not nested under /tickets.
+# ---------------------------------------------------------------------------
+
+
+@flat_router.post(
+    "/ticket-new", response_model=DataResponse[TicketResponse], status_code=status.HTTP_201_CREATED
+)
+def create_ticket_new(
+    payload: TicketNewCreate,
+    ticket_service: TicketService = Depends(get_ticket_service),
+    current_user: User = Depends(require_roles(*_CREATE_ROLES)),
+) -> DataResponse[TicketResponse]:
+    """The requester is always the caller, unless a Manager/Administrator
+    explicitly sets requester_user_id to create the ticket on someone
+    else's behalf.
+    """
+    try:
+        ticket = ticket_service.create_ticket_new(current_user, payload)
+    except TicketCategoryNotFoundError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Category not found") from exc
+    except TicketPriorityNotFoundError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Priority not found") from exc
+    except TicketRequesterNotFoundError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Requester not found") from exc
+    except TicketPermissionError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only a Manager or Administrator may create a ticket for another user",
+        ) from exc
+    return DataResponse(data=TicketResponse.model_validate(ticket), msg="Ticket created successfully")
+
+
+@flat_router.get("/all-tickets", response_model=DataResponse[list[TicketResponse]])
+def get_all_tickets(
+    ticket_status: TicketStatus | None = Query(default=None, alias="status"),
+    priority_id: int | None = Query(default=None),
+    category_id: int | None = Query(default=None),
+    department_id: int | None = Query(default=None),
+    requester_id: int | None = Query(default=None, alias="requester"),
+    assigned_to: int | None = Query(default=None),
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    ticket_service: TicketService = Depends(get_ticket_service),
+    current_user: User = Depends(require_roles(*_VIEW_ROLES)),
+) -> DataResponse[list[TicketResponse]]:
+    """Same visibility rules as GET /tickets (Employee own, Technician
+    assigned, Manager/Admin all), plus pagination, sorting, and the full
+    filter/search set.
+    """
+    tickets = ticket_service.list_tickets(
+        current_user,
+        status=ticket_status,
+        priority_id=priority_id,
+        category_id=category_id,
+        department_id=department_id,
+        created_by=requester_id,
+        assigned_to=assigned_to,
+        search=search,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        skip=skip,
+        limit=limit,
+    )
+    return DataResponse(
+        data=[TicketResponse.model_validate(ticket) for ticket in tickets],
+        msg=f"Fetched {len(tickets)} tickets",
+    )
