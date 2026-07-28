@@ -11,13 +11,18 @@ from app.dependencies.attachment import get_attachment_service
 from app.dependencies.auth import get_auth_service, get_user_repository
 from app.dependencies.category import get_category_service
 from app.dependencies.comment import get_comment_service
+from app.dependencies.department import get_department_service
 from app.dependencies.history import get_history_service
+from app.dependencies.priority import get_priority_service
 from app.dependencies.ticket import get_ticket_service
+from app.dependencies.user import get_user_service
 from app.main import app
 from app.models.attachment import Attachment
 from app.models.category import Category
 from app.models.comment import Comment
-from app.models.enums import TicketPriority, TicketStatus
+from app.models.department import Department
+from app.models.enums import TicketStatus
+from app.models.priority import Priority
 from app.models.role import Role
 from app.models.ticket import Ticket
 from app.models.ticket_history import TicketHistory
@@ -26,8 +31,11 @@ from app.services.attachment_service import AttachmentService
 from app.services.auth_service import AuthService
 from app.services.category_service import CategoryService
 from app.services.comment_service import CommentService
+from app.services.department_service import DepartmentService
 from app.services.history_service import HistoryService
+from app.services.priority_service import PriorityService
 from app.services.ticket_service import TicketService
+from app.services.user_service import UserService
 
 ADMIN_PASSWORD = "CorrectHorseBattery1!"
 INACTIVE_PASSWORD = "SomePassword1!"
@@ -41,24 +49,121 @@ TECHNICIAN_2_PASSWORD = "TechnicianTwoPass1!"
 class FakeUserRepository:
     """In-memory stand-in for UserRepository.
 
-    Auth tests must not touch the real SQL-Server-only database, and the
-    production models aren't SQLite-compatible enough to fake with an
-    in-memory engine. Instead, AuthService and the auth dependencies accept
-    a repository object structurally (same method names/signatures as
-    UserRepository), so this plain Python class - backed by a dict of
-    plain (unsaved) User/Role ORM instances - substitutes for it without
-    ever creating an engine or session.
+    Auth/user-management tests must not touch the real SQL-Server-only
+    database, and the production models aren't SQLite-compatible enough to
+    fake with an in-memory engine. Instead, AuthService/UserService and the
+    auth dependencies accept a repository object structurally (same method
+    names/signatures as UserRepository), so this plain Python class -
+    backed by a dict of plain (unsaved) User/Role ORM instances -
+    substitutes for it without ever creating an engine or session.
     """
 
     def __init__(self, users: list[User]) -> None:
         self._by_id = {user.id: user for user in users}
-        self._by_email = {user.email.strip().lower(): user for user in users}
+        self._next_id = max(self._by_id, default=0) + 1
+
+    def _reindex(self, obj: User) -> None:
+        self._by_id[obj.id] = obj
 
     def get_by_id(self, id_: int) -> User | None:
         return self._by_id.get(id_)
 
+    def get_all(self) -> list[User]:
+        return list(self._by_id.values())
+
     def get_by_email(self, email: str) -> User | None:
-        return self._by_email.get(email.strip().lower())
+        target = email.strip().lower()
+        return next((u for u in self._by_id.values() if u.email.lower() == target), None)
+
+    def get_by_username(self, username: str) -> User | None:
+        target = username.strip().lower()
+        return next((u for u in self._by_id.values() if u.username.lower() == target), None)
+
+    def get_by_username_or_email(self, identifier: str) -> User | None:
+        return self.get_by_username(identifier) or self.get_by_email(identifier)
+
+    def _filtered(
+        self,
+        *,
+        role_id: int | None = None,
+        department_id: int | None = None,
+        is_active: bool | None = None,
+        search: str | None = None,
+    ) -> list[User]:
+        results = list(self._by_id.values())
+        if role_id is not None:
+            results = [u for u in results if u.role_id == role_id]
+        if department_id is not None:
+            results = [u for u in results if u.department_id == department_id]
+        if is_active is not None:
+            results = [u for u in results if u.is_active == is_active]
+        if search:
+            needle = search.strip().lower()
+            results = [
+                u
+                for u in results
+                if needle in u.username.lower()
+                or needle in u.first_name.lower()
+                or needle in u.last_name.lower()
+                or needle in u.email.lower()
+            ]
+        return sorted(results, key=lambda u: u.id)
+
+    def get_with_filters(
+        self,
+        *,
+        role_id: int | None = None,
+        department_id: int | None = None,
+        is_active: bool | None = None,
+        search: str | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> list[User]:
+        results = self._filtered(
+            role_id=role_id, department_id=department_id, is_active=is_active, search=search
+        )
+        return results[skip : skip + limit]
+
+    def count_with_filters(
+        self,
+        *,
+        role_id: int | None = None,
+        department_id: int | None = None,
+        is_active: bool | None = None,
+        search: str | None = None,
+    ) -> int:
+        return len(
+            self._filtered(
+                role_id=role_id, department_id=department_id, is_active=is_active, search=search
+            )
+        )
+
+    def create(self, obj: User) -> User:
+        obj.id = self._next_id
+        self._next_id += 1
+        now = datetime.now(timezone.utc)
+        obj.created_at = now
+        obj.updated_at = now
+        self._reindex(obj)
+        return obj
+
+    def update(self, obj: User) -> User:
+        obj.updated_at = datetime.now(timezone.utc)
+        self._reindex(obj)
+        return obj
+
+
+class FakeRoleRepository:
+    """In-memory stand-in for RoleRepository. Same rationale as FakeUserRepository."""
+
+    def __init__(self, roles: list[Role]) -> None:
+        self._by_id = {role.id: role for role in roles}
+
+    def get_by_id(self, id_: int) -> Role | None:
+        return self._by_id.get(id_)
+
+    def get_by_name(self, name: str) -> Role | None:
+        return next((r for r in self._by_id.values() if r.name == name), None)
 
 
 class FakeCategoryRepository:
@@ -96,8 +201,79 @@ class FakeCategoryRepository:
         return category_id in self.referenced_category_ids
 
 
+class FakeDepartmentRepository:
+    """In-memory stand-in for DepartmentRepository. Same rationale as FakeCategoryRepository."""
+
+    def __init__(self, departments: list[Department] | None = None) -> None:
+        self._by_id = {department.id: department for department in (departments or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+
+    def get_all(self) -> list[Department]:
+        return list(self._by_id.values())
+
+    def get_by_id(self, id_: int) -> Department | None:
+        return self._by_id.get(id_)
+
+    def get_by_title(self, title: str) -> Department | None:
+        target = title.strip().lower()
+        return next((d for d in self._by_id.values() if d.title.lower() == target), None)
+
+    def create(self, obj: Department) -> Department:
+        obj.id = self._next_id
+        self._next_id += 1
+        now = datetime.now(timezone.utc)
+        obj.created_at = now
+        obj.updated_at = now
+        self._by_id[obj.id] = obj
+        return obj
+
+    def update(self, obj: Department) -> Department:
+        obj.updated_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
+
+class FakePriorityRepository:
+    """In-memory stand-in for PriorityRepository. Same rationale as FakeCategoryRepository."""
+
+    def __init__(self, priorities: list[Priority] | None = None) -> None:
+        self._by_id = {priority.id: priority for priority in (priorities or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+
+    def get_all(self) -> list[Priority]:
+        return list(self._by_id.values())
+
+    def get_by_id(self, id_: int) -> Priority | None:
+        return self._by_id.get(id_)
+
+    def get_by_title(self, title: str) -> Priority | None:
+        target = title.strip().lower()
+        return next((p for p in self._by_id.values() if p.title.lower() == target), None)
+
+    def create(self, obj: Priority) -> Priority:
+        obj.id = self._next_id
+        self._next_id += 1
+        now = datetime.now(timezone.utc)
+        obj.created_at = now
+        obj.updated_at = now
+        self._by_id[obj.id] = obj
+        return obj
+
+    def update(self, obj: Priority) -> Priority:
+        obj.updated_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
+
 class FakeTicketRepository:
     """In-memory stand-in for TicketRepository. Same rationale as FakeCategoryRepository."""
+
+    _SORT_KEYS: dict[str, Callable[[Ticket], object]] = {
+        "created_at": lambda t: t.created_at,
+        "updated_at": lambda t: t.updated_at,
+        "title": lambda t: t.title,
+        "ticket_number": lambda t: t.ticket_number,
+    }
 
     def __init__(self, tickets: list[Ticket] | None = None) -> None:
         self._by_id = {ticket.id: ticket for ticket in (tickets or [])}
@@ -111,22 +287,49 @@ class FakeTicketRepository:
         self,
         *,
         status: TicketStatus | None = None,
-        priority: TicketPriority | None = None,
+        priority_id: int | None = None,
         category_id: int | None = None,
+        department_id: int | None = None,
         created_by_user_id: int | None = None,
         assigned_technician_id: int | None = None,
+        search: str | None = None,
+        sort_by: str = "created_at",
+        sort_dir: str = "desc",
+        skip: int | None = None,
+        limit: int | None = None,
     ) -> list[Ticket]:
         results = list(self._by_id.values())
+        if department_id is not None:
+            results = [
+                t
+                for t in results
+                if t.created_by is not None and t.created_by.department_id == department_id
+            ]
         if status is not None:
             results = [t for t in results if t.status == status]
-        if priority is not None:
-            results = [t for t in results if t.priority == priority]
+        if priority_id is not None:
+            results = [t for t in results if t.priority_id == priority_id]
         if category_id is not None:
             results = [t for t in results if t.category_id == category_id]
         if created_by_user_id is not None:
             results = [t for t in results if t.created_by_user_id == created_by_user_id]
         if assigned_technician_id is not None:
             results = [t for t in results if t.assigned_technician_id == assigned_technician_id]
+        if search:
+            needle = search.strip().lower()
+            results = [
+                t
+                for t in results
+                if needle in t.title.lower() or needle in t.description.lower()
+            ]
+
+        key_fn = self._SORT_KEYS.get(sort_by, self._SORT_KEYS["created_at"])
+        results = sorted(results, key=key_fn, reverse=(sort_dir != "asc"))
+
+        if skip is not None:
+            results = results[skip:]
+        if limit is not None:
+            results = results[:limit]
         return results
 
     def create(self, obj: Ticket) -> Ticket:
@@ -261,10 +464,10 @@ class FakeStorageService:
 class FakeSession:
     """No-op stand-in for the transaction-boundary calls the services make.
 
-    CategoryService/TicketService/CommentService own commit()/rollback()
-    (repositories never commit), so a fake service needs a fake session to
-    call those on - this just swallows both, since the fake repositories
-    already persist in memory.
+    CategoryService/TicketService/CommentService/UserService/etc. own
+    commit()/rollback() (repositories never commit), so a fake service
+    needs a fake session to call those on - this just swallows both, since
+    the fake repositories already persist in memory.
     """
 
     def commit(self) -> None:
@@ -295,94 +498,163 @@ def manager_role() -> Role:
 
 
 @pytest.fixture
-def active_admin_user(admin_role: Role) -> User:
+def it_department() -> Department:
+    now = datetime.now(timezone.utc)
+    return Department(id=1, title="IT", created_at=now, updated_at=now)
+
+
+@pytest.fixture
+def hr_department() -> Department:
+    now = datetime.now(timezone.utc)
+    return Department(id=2, title="HR", created_at=now, updated_at=now)
+
+
+@pytest.fixture
+def low_priority() -> Priority:
+    now = datetime.now(timezone.utc)
+    return Priority(id=1, title="Low", created_at=now, updated_at=now)
+
+
+@pytest.fixture
+def medium_priority() -> Priority:
+    now = datetime.now(timezone.utc)
+    return Priority(id=2, title="Medium", created_at=now, updated_at=now)
+
+
+@pytest.fixture
+def high_priority() -> Priority:
+    now = datetime.now(timezone.utc)
+    return Priority(id=3, title="High", created_at=now, updated_at=now)
+
+
+@pytest.fixture
+def critical_priority() -> Priority:
+    now = datetime.now(timezone.utc)
+    return Priority(id=4, title="Critical", created_at=now, updated_at=now)
+
+
+@pytest.fixture
+def active_admin_user(admin_role: Role, it_department: Department) -> User:
+    now = datetime.now(timezone.utc)
     user = User(
         id=1,
+        username="admin",
         first_name="Ada",
         last_name="Admin",
         email="admin@itonit.test",
         password_hash=hash_password(ADMIN_PASSWORD),
         role_id=admin_role.id,
+        department_id=it_department.id,
         is_active=True,
+        created_at=now,
+        updated_at=now,
     )
     user.role = admin_role
+    user.department = it_department
     return user
 
 
 @pytest.fixture
 def inactive_user(employee_role: Role) -> User:
+    now = datetime.now(timezone.utc)
     user = User(
         id=2,
+        username="inactive",
         first_name="Ivy",
         last_name="Inactive",
         email="inactive@itonit.test",
         password_hash=hash_password(INACTIVE_PASSWORD),
         role_id=employee_role.id,
         is_active=False,
+        created_at=now,
+        updated_at=now,
     )
     user.role = employee_role
+    user.department = None
     return user
 
 
 @pytest.fixture
-def active_employee_user(employee_role: Role) -> User:
+def active_employee_user(employee_role: Role, it_department: Department) -> User:
+    now = datetime.now(timezone.utc)
     user = User(
         id=3,
+        username="employee",
         first_name="Eve",
         last_name="Employee",
         email="employee@itonit.test",
         password_hash=hash_password(EMPLOYEE_PASSWORD),
         role_id=employee_role.id,
+        department_id=it_department.id,
         is_active=True,
+        created_at=now,
+        updated_at=now,
     )
     user.role = employee_role
+    user.department = it_department
     return user
 
 
 @pytest.fixture
 def active_technician_user(technician_role: Role) -> User:
+    now = datetime.now(timezone.utc)
     user = User(
         id=4,
+        username="technician",
         first_name="Tom",
         last_name="Technician",
         email="technician@itonit.test",
         password_hash=hash_password(TECHNICIAN_PASSWORD),
         role_id=technician_role.id,
         is_active=True,
+        created_at=now,
+        updated_at=now,
     )
     user.role = technician_role
+    user.department = None
     return user
 
 
 @pytest.fixture
 def active_manager_user(manager_role: Role) -> User:
+    now = datetime.now(timezone.utc)
     user = User(
         id=5,
+        username="manager",
         first_name="Mona",
         last_name="Manager",
         email="manager@itonit.test",
         password_hash=hash_password(MANAGER_PASSWORD),
         role_id=manager_role.id,
         is_active=True,
+        created_at=now,
+        updated_at=now,
     )
     user.role = manager_role
+    user.department = None
     return user
 
 
 @pytest.fixture
-def active_employee_user_2(employee_role: Role) -> User:
+def active_employee_user_2(employee_role: Role, hr_department: Department) -> User:
     """A second employee, distinct from active_employee_user - needed to
     prove employees cannot see/edit each other's tickets."""
+    now = datetime.now(timezone.utc)
     user = User(
         id=6,
+        username="employee2",
         first_name="Eli",
         last_name="EmployeeTwo",
         email="employee2@itonit.test",
         password_hash=hash_password(EMPLOYEE_2_PASSWORD),
         role_id=employee_role.id,
+        department_id=hr_department.id,
         is_active=True,
+        created_at=now,
+        updated_at=now,
     )
     user.role = employee_role
+    user.department = hr_department
     return user
 
 
@@ -390,16 +662,21 @@ def active_employee_user_2(employee_role: Role) -> User:
 def active_technician_user_2(technician_role: Role) -> User:
     """A second technician, distinct from active_technician_user - needed to
     prove technicians cannot see/edit tickets assigned to someone else."""
+    now = datetime.now(timezone.utc)
     user = User(
         id=7,
+        username="technician2",
         first_name="Tia",
         last_name="TechnicianTwo",
         email="technician2@itonit.test",
         password_hash=hash_password(TECHNICIAN_2_PASSWORD),
         role_id=technician_role.id,
         is_active=True,
+        created_at=now,
+        updated_at=now,
     )
     user.role = technician_role
+    user.department = None
     return user
 
 
@@ -424,7 +701,9 @@ def software_category() -> Category:
 
 
 @pytest.fixture
-def employee_ticket(hardware_category: Category, active_employee_user: User) -> Ticket:
+def employee_ticket(
+    hardware_category: Category, medium_priority: Priority, active_employee_user: User
+) -> Ticket:
     """A brand-new ticket, owned by active_employee_user, not yet assigned."""
     now = datetime.now(timezone.utc)
     ticket = Ticket(
@@ -432,8 +711,9 @@ def employee_ticket(hardware_category: Category, active_employee_user: User) -> 
         ticket_number="IT-2026-000001",
         title="Laptop will not boot",
         description="Screen stays black after pressing the power button.",
+        location="Building A, Desk 12",
         status=TicketStatus.NEW,
-        priority=TicketPriority.MEDIUM,
+        priority_id=medium_priority.id,
         category_id=hardware_category.id,
         created_by_user_id=active_employee_user.id,
         assigned_technician_id=None,
@@ -441,6 +721,7 @@ def employee_ticket(hardware_category: Category, active_employee_user: User) -> 
         updated_at=now,
     )
     ticket.category = hardware_category
+    ticket.priority = medium_priority
     ticket.created_by = active_employee_user
     ticket.assigned_technician = None
     return ticket
@@ -448,7 +729,10 @@ def employee_ticket(hardware_category: Category, active_employee_user: User) -> 
 
 @pytest.fixture
 def assigned_ticket(
-    software_category: Category, active_employee_user: User, active_technician_user: User
+    software_category: Category,
+    high_priority: Priority,
+    active_employee_user: User,
+    active_technician_user: User,
 ) -> Ticket:
     """A ticket already assigned to active_technician_user and in progress."""
     now = datetime.now(timezone.utc)
@@ -457,8 +741,9 @@ def assigned_ticket(
         ticket_number="IT-2026-000002",
         title="VPN disconnects repeatedly",
         description="The VPN client drops the connection every few minutes.",
+        location=None,
         status=TicketStatus.ASSIGNED,
-        priority=TicketPriority.HIGH,
+        priority_id=high_priority.id,
         category_id=software_category.id,
         created_by_user_id=active_employee_user.id,
         assigned_technician_id=active_technician_user.id,
@@ -466,6 +751,7 @@ def assigned_ticket(
         updated_at=now,
     )
     ticket.category = software_category
+    ticket.priority = high_priority
     ticket.created_by = active_employee_user
     ticket.assigned_technician = active_technician_user
     return ticket
@@ -548,6 +834,30 @@ def user_repository(
 
 
 @pytest.fixture
+def role_repository(
+    admin_role: Role, employee_role: Role, technician_role: Role, manager_role: Role
+) -> FakeRoleRepository:
+    return FakeRoleRepository([admin_role, employee_role, technician_role, manager_role])
+
+
+@pytest.fixture
+def department_repository(
+    it_department: Department, hr_department: Department
+) -> FakeDepartmentRepository:
+    return FakeDepartmentRepository([it_department, hr_department])
+
+
+@pytest.fixture
+def priority_repository(
+    low_priority: Priority,
+    medium_priority: Priority,
+    high_priority: Priority,
+    critical_priority: Priority,
+) -> FakePriorityRepository:
+    return FakePriorityRepository([low_priority, medium_priority, high_priority, critical_priority])
+
+
+@pytest.fixture
 def category_repository(
     hardware_category: Category, software_category: Category
 ) -> FakeCategoryRepository:
@@ -602,6 +912,9 @@ def auth_headers() -> Callable[[User], dict[str, str]]:
 @pytest.fixture
 def client(
     user_repository: FakeUserRepository,
+    role_repository: FakeRoleRepository,
+    department_repository: FakeDepartmentRepository,
+    priority_repository: FakePriorityRepository,
     category_repository: FakeCategoryRepository,
     ticket_repository: FakeTicketRepository,
     comment_repository: FakeCommentRepository,
@@ -621,10 +934,23 @@ def client(
     app.dependency_overrides[get_category_service] = lambda: CategoryService(
         db=FakeSession(), category_repository=category_repository
     )
+    app.dependency_overrides[get_department_service] = lambda: DepartmentService(
+        db=FakeSession(), department_repository=department_repository
+    )
+    app.dependency_overrides[get_priority_service] = lambda: PriorityService(
+        db=FakeSession(), priority_repository=priority_repository
+    )
+    app.dependency_overrides[get_user_service] = lambda: UserService(
+        db=FakeSession(),
+        user_repository=user_repository,
+        role_repository=role_repository,
+        department_repository=department_repository,
+    )
     app.dependency_overrides[get_ticket_service] = lambda: TicketService(
         db=FakeSession(),
         ticket_repository=ticket_repository,
         category_repository=category_repository,
+        priority_repository=priority_repository,
         user_repository=user_repository,
         history_service=history_service,
     )

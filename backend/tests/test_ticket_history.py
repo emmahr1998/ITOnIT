@@ -3,6 +3,7 @@ from collections.abc import Callable
 from fastapi.testclient import TestClient
 
 from app.models.category import Category
+from app.models.priority import Priority
 from app.models.ticket import Ticket
 from app.models.user import User
 
@@ -18,17 +19,20 @@ def test_history_records_ticket_created(
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
     hardware_category: Category,
+    medium_priority: Priority,
 ) -> None:
     create_response = client.post(
-        "/tickets",
+        "/ticket-new",
         json={
             "title": "Monitor flickering",
             "description": "External monitor flickers intermittently.",
             "category_id": hardware_category.id,
+            "priority_id": medium_priority.id,
         },
         headers=auth_headers(active_employee_user),
     )
-    ticket_id = create_response.json()["id"]
+    created_ticket = create_response.json()["data"]
+    ticket_id = created_ticket["id"]
 
     history_response = client.get(
         f"/tickets/{ticket_id}/history", headers=auth_headers(active_employee_user)
@@ -39,7 +43,7 @@ def test_history_records_ticket_created(
     entry = entries[0]
     assert entry["action"] == "ticket_created"
     assert entry["old_value"] is None
-    assert entry["new_value"] == create_response.json()["ticket_number"]
+    assert entry["new_value"] == created_ticket["ticket_number"]
     assert entry["performed_by"]["id"] == active_employee_user.id
     assert entry["timestamp"] is not None
 
@@ -49,16 +53,10 @@ def test_history_records_title_and_description_changes(
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
     employee_ticket: Ticket,
-    hardware_category: Category,
 ) -> None:
-    client.put(
+    client.patch(
         f"/tickets/{employee_ticket.id}",
-        json={
-            "title": "New title",
-            "description": "New description text.",
-            "category_id": hardware_category.id,
-            "priority": "MEDIUM",
-        },
+        json={"title": "New title", "description": "New description text."},
         headers=auth_headers(active_employee_user),
     )
 
@@ -78,14 +76,9 @@ def test_history_records_category_change(
     hardware_category: Category,
     software_category: Category,
 ) -> None:
-    client.put(
+    client.patch(
         f"/tickets/{employee_ticket.id}",
-        json={
-            "title": employee_ticket.title,
-            "description": employee_ticket.description,
-            "category_id": software_category.id,
-            "priority": "MEDIUM",
-        },
+        json={"category_id": software_category.id},
         headers=auth_headers(active_employee_user),
     )
 
@@ -102,16 +95,11 @@ def test_history_records_priority_change(
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
     employee_ticket: Ticket,
-    hardware_category: Category,
+    high_priority: Priority,
 ) -> None:
-    client.put(
+    client.patch(
         f"/tickets/{employee_ticket.id}",
-        json={
-            "title": employee_ticket.title,
-            "description": employee_ticket.description,
-            "category_id": hardware_category.id,
-            "priority": "CRITICAL",
-        },
+        json={"priority_id": high_priority.id},
         headers=auth_headers(active_employee_user),
     )
 
@@ -119,8 +107,8 @@ def test_history_records_priority_change(
         f"/tickets/{employee_ticket.id}/history", headers=auth_headers(active_employee_user)
     )
     actions = _action_map(response.json())
-    assert actions["priority"]["old_value"] == "MEDIUM"
-    assert actions["priority"]["new_value"] == "CRITICAL"
+    assert actions["priority"]["old_value"] == "Medium"
+    assert actions["priority"]["new_value"] == "High"
 
 
 def test_history_records_technician_assignment_and_status_advance(

@@ -10,12 +10,3 @@ class TicketStatus(str, enum.Enum):
     WAITING_FOR_EMPLOYEE = "WAITING_FOR_EMPLOYEE"
     RESOLVED = "RESOLVED"
     CLOSED = "CLOSED"
-
-
-class TicketPriority(str, enum.Enum):
-    """Priority levels a ticket can be assigned, per docs/database-design.md."""
-
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-    CRITICAL = "CRITICAL"

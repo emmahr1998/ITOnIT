@@ -7,13 +7,14 @@ from sqlalchemy import Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
-from app.models.enums import TicketPriority, TicketStatus
+from app.models.enums import TicketStatus
 from app.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.attachment import Attachment
     from app.models.category import Category
     from app.models.comment import Comment
+    from app.models.priority import Priority
     from app.models.ticket_history import TicketHistory
     from app.models.user import User
 
@@ -27,6 +28,7 @@ class Ticket(TimestampMixin, Base):
     ticket_number: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[TicketStatus] = mapped_column(
         Enum(
             TicketStatus,
@@ -38,17 +40,7 @@ class Ticket(TimestampMixin, Base):
         ),
         nullable=False,
     )
-    priority: Mapped[TicketPriority] = mapped_column(
-        Enum(
-            TicketPriority,
-            name="ck_tickets_priority",
-            native_enum=False,
-            create_constraint=True,
-            length=20,
-            values_callable=lambda enum_cls: [member.value for member in enum_cls],
-        ),
-        nullable=False,
-    )
+    priority_id: Mapped[int] = mapped_column(ForeignKey("priorities.id"), nullable=False)
     category_id: Mapped[int] = mapped_column(
         ForeignKey("categories.id"), nullable=False
     )
@@ -62,6 +54,7 @@ class Ticket(TimestampMixin, Base):
     closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     category: Mapped["Category"] = relationship(back_populates="tickets")
+    priority: Mapped["Priority"] = relationship(back_populates="tickets")
     created_by: Mapped["User"] = relationship(
         back_populates="created_tickets", foreign_keys=[created_by_user_id]
     )

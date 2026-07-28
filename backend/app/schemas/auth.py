@@ -2,18 +2,36 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class LoginRequest(BaseModel):
-    """POST /auth/login request body."""
+    """POST /auth/login request body.
 
-    email: str
+    ``username`` is the documented login field, but the service looks it up
+    against both the username and email columns in one query, so existing
+    email-based logins keep working without a second documented field.
+    """
+
+    username: str
     password: str
 
 
 class TokenResponse(BaseModel):
     """POST /auth/login response body."""
 
-    access_token: str
+    access: str
+    refresh: str
     token_type: str = "bearer"
-    expires_in: int
+
+
+class RefreshRequest(BaseModel):
+    """POST /auth/refresh request body."""
+
+    refresh: str
+
+
+class RefreshResponse(BaseModel):
+    """POST /auth/refresh response body: a new access token only."""
+
+    access: str
+    token_type: str = "bearer"
 
 
 class TokenPayload(BaseModel):
@@ -22,6 +40,7 @@ class TokenPayload(BaseModel):
     sub: str
     exp: int
     iat: int | None = None
+    type: str
 
 
 class CurrentUserResponse(BaseModel):

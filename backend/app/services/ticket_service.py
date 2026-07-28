@@ -3,13 +3,16 @@ from datetime import datetime, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.enums import TicketPriority, TicketStatus
+from app.models.category import Category
+from app.models.enums import TicketStatus
+from app.models.priority import Priority
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.repositories.category import CategoryRepository
+from app.repositories.priority import PriorityRepository
 from app.repositories.ticket import TicketRepository
 from app.repositories.user import UserRepository
-from app.schemas.ticket import TicketCreate, TicketUpdate
+from app.schemas.ticket import TicketNewCreate, TicketPatch
 from app.services.history_service import HistoryService
 
 TECHNICIAN_ROLE_NAME = "Technician"
@@ -38,8 +41,19 @@ class TicketCategoryNotFoundError(Exception):
     """Raised when a ticket create/update references a category id that does not exist."""
 
 
+class TicketPriorityNotFoundError(Exception):
+    """Raised when a ticket create/update references a priority id that does not exist."""
+
+
+class TicketRequesterNotFoundError(Exception):
+    """Raised when POST /ticket-new's requester_user_id does not reference an existing user."""
+
+
 class TicketPermissionError(Exception):
-    """Raised when the current user has no access to this ticket at all."""
+    """Raised when the current user has no access to this ticket at all, or -
+    for ticket creation - tries to set a requester other than themselves
+    without being a Manager/Administrator.
+    """
 
 
 class TicketNotEditableError(Exception):
@@ -74,6 +88,7 @@ class TicketService:
         db: Session,
         ticket_repository: TicketRepository | None = None,
         category_repository: CategoryRepository | None = None,
+        priority_repository: PriorityRepository | None = None,
         user_repository: UserRepository | None = None,
         history_service: HistoryService | None = None,
     ) -> None:
@@ -83,6 +98,9 @@ class TicketService:
         )
         self._category_repository = (
             category_repository if category_repository is not None else CategoryRepository(db)
+        )
+        self._priority_repository = (
+            priority_repository if priority_repository is not None else PriorityRepository(db)
         )
         self._user_repository = (
             user_repository if user_repository is not None else UserRepository(db)
@@ -107,6 +125,18 @@ class TicketService:
         if ticket.created_by_user_id != user.id:
             raise TicketPermissionError
 
+    def _get_category_or_raise(self, category_id: int) -> Category:
+        category = self._category_repository.get_by_id(category_id)
+        if category is None:
+            raise TicketCategoryNotFoundError
+        return category
+
+    def _get_priority_or_raise(self, priority_id: int) -> Priority:
+        priority = self._priority_repository.get_by_id(priority_id)
+        if priority is None:
+            raise TicketPriorityNotFoundError
+        return priority
+
     # ---- reads -----------------------------------------------------------
 
     def list_tickets(
@@ -114,11 +144,21 @@ class TicketService:
         current_user: User,
         *,
         status: TicketStatus | None = None,
-        priority: TicketPriority | None = None,
+        priority_id: int | None = None,
         category_id: int | None = None,
+        department_id: int | None = None,
         created_by: int | None = None,
         assigned_to: int | None = None,
+        search: str | None = None,
+        sort_by: str = "created_at",
+        sort_dir: str = "desc",
+        skip: int | None = None,
+        limit: int | None = None,
     ) -> list[Ticket]:
+        """Backs both GET /tickets (no search/sort/pagination passed) and
+        GET /all-tickets (the full filter set) - the ownership scoping
+        below applies identically to both.
+        """
         if not self._is_manager_or_admin(current_user):
             if current_user.role.name == TECHNICIAN_ROLE_NAME:
                 assigned_to = current_user.id  # hard scope; overrides any client value
@@ -127,10 +167,16 @@ class TicketService:
 
         return self._ticket_repository.get_with_filters(
             status=status,
-            priority=priority,
+            priority_id=priority_id,
             category_id=category_id,
+            department_id=department_id,
             created_by_user_id=created_by,
             assigned_technician_id=assigned_to,
+            search=search,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            skip=skip,
+            limit=limit,
         )
 
     def get_ticket(self, current_user: User, ticket_id: int) -> Ticket:
@@ -142,33 +188,41 @@ class TicketService:
 
     # ---- writes ------------------------------------------------------------
 
-    def create_ticket(self, current_user: User, payload: TicketCreate) -> Ticket:
-        category = self._category_repository.get_by_id(payload.category_id)
-        if category is None:
-            raise TicketCategoryNotFoundError
-
+    def _persist_new_ticket(
+        self,
+        actor: User,
+        requester: User,
+        *,
+        title: str,
+        description: str,
+        location: str | None,
+        category: Category,
+        priority: Priority,
+    ) -> Ticket:
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             ticket = Ticket(
                 ticket_number=self._generate_ticket_number(),
-                title=payload.title,
-                description=payload.description,
+                title=title,
+                description=description,
+                location=location,
                 status=TicketStatus.NEW,
-                priority=payload.priority,
-                category_id=payload.category_id,
-                created_by_user_id=current_user.id,
+                priority_id=priority.id,
+                category_id=category.id,
+                created_by_user_id=requester.id,
                 assigned_technician_id=None,
             )
             # Set the relationship objects directly rather than relying on a
             # later lazy-load through the FK - correct immediately, with no
             # dependency on session/refresh timing.
             ticket.category = category
-            ticket.created_by = current_user
+            ticket.priority = priority
+            ticket.created_by = requester
             ticket.assigned_technician = None
             try:
                 self._ticket_repository.create(ticket)
                 self._history_service.record(
-                    ticket.id, current_user, "ticket_created", None, ticket.ticket_number
+                    ticket.id, actor, "ticket_created", None, ticket.ticket_number
                 )
                 self._db.commit()
                 return ticket
@@ -181,7 +235,42 @@ class TicketService:
 
         raise AssertionError("unreachable: loop always returns or re-raises")
 
-    def update_ticket(self, current_user: User, ticket_id: int, payload: TicketUpdate) -> Ticket:
+    def create_ticket_new(self, current_user: User, payload: TicketNewCreate) -> Ticket:
+        """POST /ticket-new: same as create_ticket, but a Manager/Administrator
+        may set requester_user_id to create the ticket on behalf of someone
+        else. Anyone else supplying a requester_user_id other than their own
+        id is rejected outright.
+        """
+        category = self._get_category_or_raise(payload.category_id)
+        priority = self._get_priority_or_raise(payload.priority_id)
+
+        requester = current_user
+        if (
+            payload.requester_user_id is not None
+            and payload.requester_user_id != current_user.id
+        ):
+            if not self._is_manager_or_admin(current_user):
+                raise TicketPermissionError
+            requester = self._user_repository.get_by_id(payload.requester_user_id)
+            if requester is None:
+                raise TicketRequesterNotFoundError
+
+        return self._persist_new_ticket(
+            current_user,
+            requester,
+            title=payload.title,
+            description=payload.description,
+            location=payload.location,
+            category=category,
+            priority=priority,
+        )
+
+    def patch_ticket(self, current_user: User, ticket_id: int, payload: TicketPatch) -> Ticket:
+        """PATCH /tickets/{id}: partial update of title/description/location/
+        category_id/priority_id only. Assignment, status, requester, and
+        timestamps are never touched here - each still goes through its own
+        dedicated endpoint/mechanism.
+        """
         ticket = self.get_ticket(current_user, ticket_id)  # 404 + view-ownership check
 
         if current_user.role.name == TECHNICIAN_ROLE_NAME:
@@ -190,39 +279,49 @@ class TicketService:
             if ticket.status != TicketStatus.NEW:
                 raise TicketNotEditableError
 
-        category = self._category_repository.get_by_id(payload.category_id)
-        if category is None:
-            raise TicketCategoryNotFoundError
+        fields_set = payload.model_fields_set
 
-        # One history entry per field that actually changed - "Ticket
-        # updated"/"Category changed"/"Priority changed" from the business
-        # rules are all realized this way, rather than one generic entry
-        # that couldn't hold more than one field's old/new value anyway.
-        if ticket.title != payload.title:
+        if "title" in fields_set and payload.title is not None and ticket.title != payload.title:
             self._history_service.record(
                 ticket.id, current_user, "title", ticket.title, payload.title
             )
             ticket.title = payload.title
-        if ticket.description != payload.description:
+        if (
+            "description" in fields_set
+            and payload.description is not None
+            and ticket.description != payload.description
+        ):
             self._history_service.record(
                 ticket.id, current_user, "description", ticket.description, payload.description
             )
             ticket.description = payload.description
-        if ticket.category_id != payload.category_id:
+        if "location" in fields_set and ticket.location != payload.location:
+            self._history_service.record(
+                ticket.id, current_user, "location", ticket.location, payload.location
+            )
+            ticket.location = payload.location
+        if (
+            "category_id" in fields_set
+            and payload.category_id is not None
+            and ticket.category_id != payload.category_id
+        ):
+            category = self._get_category_or_raise(payload.category_id)
             self._history_service.record(
                 ticket.id, current_user, "category", ticket.category.name, category.name
             )
             ticket.category_id = payload.category_id
-        ticket.category = category
-        if ticket.priority != payload.priority:
+            ticket.category = category
+        if (
+            "priority_id" in fields_set
+            and payload.priority_id is not None
+            and ticket.priority_id != payload.priority_id
+        ):
+            priority = self._get_priority_or_raise(payload.priority_id)
             self._history_service.record(
-                ticket.id,
-                current_user,
-                "priority",
-                ticket.priority.value,
-                payload.priority.value,
+                ticket.id, current_user, "priority", ticket.priority.title, priority.title
             )
-            ticket.priority = payload.priority
+            ticket.priority_id = payload.priority_id
+            ticket.priority = priority
 
         self._ticket_repository.update(ticket)
         self._db.commit()

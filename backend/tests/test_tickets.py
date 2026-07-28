@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.models.category import Category
 from app.models.enums import TicketStatus
+from app.models.priority import Priority
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.services.history_service import HistoryService
@@ -16,196 +17,17 @@ from app.services.ticket_service import (
 )
 from tests.conftest import FakeHistoryRepository, FakeTicketRepository, FakeUserRepository
 
+# ---------------------------------------------------------------------------
+# Ticket creation and collection listing now live at POST /ticket-new and
+# GET /all-tickets (see test_ticket_new_endpoints.py) - the old POST/GET
+# /tickets and PUT /tickets/{id} collection/full-replace endpoints have been
+# removed as redundant. This file covers what's left under /tickets/{id}:
+# get, delete, assign, status transitions, and service-level edge cases.
+# ---------------------------------------------------------------------------
+
 
 def _minimal_repository(tickets: list[Ticket]) -> FakeTicketRepository:
     return FakeTicketRepository(tickets)
-
-
-# ---------------------------------------------------------------------------
-# Create
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "role_fixture", ["active_employee_user", "active_manager_user", "active_admin_user"]
-)
-def test_create_ticket_succeeds_for_allowed_roles(
-    client: TestClient,
-    auth_headers: Callable[[User], dict[str, str]],
-    hardware_category: Category,
-    role_fixture: str,
-    request: pytest.FixtureRequest,
-) -> None:
-    user = request.getfixturevalue(role_fixture)
-    response = client.post(
-        "/tickets",
-        json={
-            "title": "Printer jam",
-            "description": "Paper jam on the 3rd floor printer.",
-            "category_id": hardware_category.id,
-            "priority": "HIGH",
-        },
-        headers=auth_headers(user),
-    )
-    assert response.status_code == 201
-    body = response.json()
-    assert body["status"] == "NEW"
-    assert body["assigned_technician"] is None
-    assert body["created_by"]["id"] == user.id
-    assert body["category"]["id"] == hardware_category.id
-    assert body["priority"] == "HIGH"
-
-
-def test_create_ticket_forbidden_for_technician(
-    client: TestClient,
-    active_technician_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    hardware_category: Category,
-) -> None:
-    response = client.post(
-        "/tickets",
-        json={
-            "title": "Printer jam",
-            "description": "Paper jam.",
-            "category_id": hardware_category.id,
-        },
-        headers=auth_headers(active_technician_user),
-    )
-    assert response.status_code == 403
-
-
-def test_create_ticket_unknown_category_returns_400(
-    client: TestClient,
-    active_employee_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-) -> None:
-    response = client.post(
-        "/tickets",
-        json={"title": "Printer jam", "description": "Paper jam.", "category_id": 999999},
-        headers=auth_headers(active_employee_user),
-    )
-    assert response.status_code == 400
-
-
-def test_create_ticket_defaults_priority_to_medium(
-    client: TestClient,
-    active_employee_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    hardware_category: Category,
-) -> None:
-    response = client.post(
-        "/tickets",
-        json={
-            "title": "Mouse not working",
-            "description": "Wireless mouse is unresponsive.",
-            "category_id": hardware_category.id,
-        },
-        headers=auth_headers(active_employee_user),
-    )
-    assert response.status_code == 201
-    assert response.json()["priority"] == "MEDIUM"
-
-
-def test_create_ticket_requires_authentication(client: TestClient) -> None:
-    response = client.post(
-        "/tickets", json={"title": "x", "description": "y", "category_id": 1}
-    )
-    assert response.status_code == 401
-
-
-# ---------------------------------------------------------------------------
-# List
-# ---------------------------------------------------------------------------
-
-
-def test_list_tickets_employee_sees_only_own(
-    client: TestClient,
-    active_employee_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    employee_ticket: Ticket,
-    assigned_ticket: Ticket,
-) -> None:
-    response = client.get("/tickets", headers=auth_headers(active_employee_user))
-    assert response.status_code == 200
-    ids = {t["id"] for t in response.json()}
-    # Both fixture tickets were created_by active_employee_user.
-    assert ids == {employee_ticket.id, assigned_ticket.id}
-
-
-def test_list_tickets_employee_2_sees_none(
-    client: TestClient,
-    active_employee_user_2: User,
-    auth_headers: Callable[[User], dict[str, str]],
-) -> None:
-    response = client.get("/tickets", headers=auth_headers(active_employee_user_2))
-    assert response.status_code == 200
-    assert response.json() == []
-
-
-def test_list_tickets_technician_sees_only_assigned(
-    client: TestClient,
-    active_technician_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    assigned_ticket: Ticket,
-) -> None:
-    response = client.get("/tickets", headers=auth_headers(active_technician_user))
-    assert response.status_code == 200
-    ids = {t["id"] for t in response.json()}
-    assert ids == {assigned_ticket.id}
-
-
-def test_list_tickets_technician_2_sees_none(
-    client: TestClient,
-    active_technician_user_2: User,
-    auth_headers: Callable[[User], dict[str, str]],
-) -> None:
-    response = client.get("/tickets", headers=auth_headers(active_technician_user_2))
-    assert response.status_code == 200
-    assert response.json() == []
-
-
-def test_list_tickets_manager_sees_all(
-    client: TestClient,
-    active_manager_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    employee_ticket: Ticket,
-    assigned_ticket: Ticket,
-) -> None:
-    response = client.get("/tickets", headers=auth_headers(active_manager_user))
-    assert response.status_code == 200
-    ids = {t["id"] for t in response.json()}
-    assert ids == {employee_ticket.id, assigned_ticket.id}
-
-
-def test_list_tickets_status_filter_narrows_results(
-    client: TestClient,
-    active_manager_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    assigned_ticket: Ticket,
-) -> None:
-    response = client.get(
-        "/tickets", params={"status": "ASSIGNED"}, headers=auth_headers(active_manager_user)
-    )
-    assert response.status_code == 200
-    ids = {t["id"] for t in response.json()}
-    assert ids == {assigned_ticket.id}
-
-
-def test_list_tickets_employee_filter_cannot_see_others_via_created_by(
-    client: TestClient,
-    active_employee_user_2: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    active_employee_user: User,
-) -> None:
-    """Employee 2 tries to pass created_by=employee_1 - the forced ownership
-    scope must win, not the client-supplied filter."""
-    response = client.get(
-        "/tickets",
-        params={"created_by": active_employee_user.id},
-        headers=auth_headers(active_employee_user_2),
-    )
-    assert response.status_code == 200
-    assert response.json() == []
 
 
 # ---------------------------------------------------------------------------
@@ -256,166 +78,6 @@ def test_get_ticket_unknown_id_returns_404(
     auth_headers: Callable[[User], dict[str, str]],
 ) -> None:
     response = client.get("/tickets/999999", headers=auth_headers(active_manager_user))
-    assert response.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# Update
-# ---------------------------------------------------------------------------
-
-
-def test_update_ticket_owner_succeeds_while_new(
-    client: TestClient,
-    active_employee_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    employee_ticket: Ticket,
-    hardware_category: Category,
-) -> None:
-    response = client.put(
-        f"/tickets/{employee_ticket.id}",
-        json={
-            "title": "Laptop will not boot - updated",
-            "description": "Still black screen, tried a hard reset.",
-            "category_id": hardware_category.id,
-            "priority": "HIGH",
-        },
-        headers=auth_headers(active_employee_user),
-    )
-    assert response.status_code == 200
-    assert response.json()["title"] == "Laptop will not boot - updated"
-
-
-def test_update_ticket_owner_forbidden_once_status_past_new(
-    client: TestClient,
-    active_employee_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    assigned_ticket: Ticket,
-    software_category: Category,
-) -> None:
-    response = client.put(
-        f"/tickets/{assigned_ticket.id}",
-        json={
-            "title": "Trying to edit after assignment",
-            "description": "Should not be allowed.",
-            "category_id": software_category.id,
-            "priority": "HIGH",
-        },
-        headers=auth_headers(active_employee_user),
-    )
-    assert response.status_code == 409
-
-
-def test_update_ticket_forbidden_for_other_employee(
-    client: TestClient,
-    active_employee_user_2: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    employee_ticket: Ticket,
-    hardware_category: Category,
-) -> None:
-    response = client.put(
-        f"/tickets/{employee_ticket.id}",
-        json={
-            "title": "x",
-            "description": "y",
-            "category_id": hardware_category.id,
-            "priority": "MEDIUM",
-        },
-        headers=auth_headers(active_employee_user_2),
-    )
-    assert response.status_code == 403
-
-
-def test_update_ticket_assigned_technician_succeeds(
-    client: TestClient,
-    active_technician_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    assigned_ticket: Ticket,
-    software_category: Category,
-) -> None:
-    response = client.put(
-        f"/tickets/{assigned_ticket.id}",
-        json={
-            "title": "VPN disconnects repeatedly - diagnosed",
-            "description": "Root cause appears to be a firmware bug.",
-            "category_id": software_category.id,
-            "priority": "CRITICAL",
-        },
-        headers=auth_headers(active_technician_user),
-    )
-    assert response.status_code == 200
-    assert response.json()["priority"] == "CRITICAL"
-
-
-def test_update_ticket_forbidden_for_unassigned_technician(
-    client: TestClient,
-    active_technician_user_2: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    assigned_ticket: Ticket,
-    software_category: Category,
-) -> None:
-    response = client.put(
-        f"/tickets/{assigned_ticket.id}",
-        json={
-            "title": "x",
-            "description": "y",
-            "category_id": software_category.id,
-            "priority": "HIGH",
-        },
-        headers=auth_headers(active_technician_user_2),
-    )
-    assert response.status_code == 403
-
-
-def test_update_ticket_manager_can_edit_any_ticket_any_status(
-    client: TestClient,
-    active_manager_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    assigned_ticket: Ticket,
-    software_category: Category,
-) -> None:
-    response = client.put(
-        f"/tickets/{assigned_ticket.id}",
-        json={
-            "title": "Manager override",
-            "description": "Manager edited this ticket directly.",
-            "category_id": software_category.id,
-            "priority": "HIGH",
-        },
-        headers=auth_headers(active_manager_user),
-    )
-    assert response.status_code == 200
-
-
-def test_update_ticket_unknown_category_returns_400(
-    client: TestClient,
-    active_employee_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    employee_ticket: Ticket,
-) -> None:
-    response = client.put(
-        f"/tickets/{employee_ticket.id}",
-        json={"title": "x", "description": "y", "category_id": 999999, "priority": "MEDIUM"},
-        headers=auth_headers(active_employee_user),
-    )
-    assert response.status_code == 400
-
-
-def test_update_ticket_unknown_id_returns_404(
-    client: TestClient,
-    active_manager_user: User,
-    auth_headers: Callable[[User], dict[str, str]],
-    hardware_category: Category,
-) -> None:
-    response = client.put(
-        "/tickets/999999",
-        json={
-            "title": "x",
-            "description": "y",
-            "category_id": hardware_category.id,
-            "priority": "MEDIUM",
-        },
-        headers=auth_headers(active_manager_user),
-    )
     assert response.status_code == 404
 
 
@@ -706,12 +368,13 @@ def test_status_unknown_ticket_returns_404(
 # ---------------------------------------------------------------------------
 
 
-def test_create_ticket_retries_ticket_number_on_integrity_error(
-    active_employee_user: User, hardware_category: Category
+def test_create_ticket_new_retries_ticket_number_on_integrity_error(
+    active_employee_user: User, hardware_category: Category, medium_priority: Priority
 ) -> None:
-    from app.schemas.ticket import TicketCreate
+    from app.schemas.ticket import TicketNewCreate
 
     category_repo = _FakeCategoryLookup({hardware_category.id: hardware_category})
+    priority_repo = _FakePriorityLookup({medium_priority.id: medium_priority})
     ticket_repo = _minimal_repository([])
     ticket_repo.fail_next_create = True
 
@@ -719,18 +382,20 @@ def test_create_ticket_retries_ticket_number_on_integrity_error(
         db=_NoopSession(),
         ticket_repository=ticket_repo,
         category_repository=category_repo,
+        priority_repository=priority_repo,
         user_repository=FakeUserRepository([active_employee_user]),
         history_service=HistoryService(
             db=_NoopSession(), history_repository=FakeHistoryRepository()
         ),
     )
 
-    payload = TicketCreate(
+    payload = TicketNewCreate(
         title="Retry me",
         description="Should succeed on the second attempt.",
         category_id=hardware_category.id,
+        priority_id=medium_priority.id,
     )
-    ticket = service.create_ticket(active_employee_user, payload)
+    ticket = service.create_ticket_new(active_employee_user, payload)
     assert ticket.id is not None
 
 
@@ -741,6 +406,7 @@ def test_change_status_service_raises_domain_error_for_missing_ticket(
         db=_NoopSession(),
         ticket_repository=_minimal_repository([]),
         category_repository=_FakeCategoryLookup({}),
+        priority_repository=_FakePriorityLookup({}),
         user_repository=FakeUserRepository([active_manager_user]),
     )
     with pytest.raises(TicketNotFoundError):
@@ -760,6 +426,14 @@ class _FakeCategoryLookup:
 
     def get_by_id(self, id_: int) -> Category | None:
         return self._categories.get(id_)
+
+
+class _FakePriorityLookup:
+    def __init__(self, priorities: dict[int, Priority]) -> None:
+        self._priorities = priorities
+
+    def get_by_id(self, id_: int) -> Priority | None:
+        return self._priorities.get(id_)
 
 
 class _NoopSession:
