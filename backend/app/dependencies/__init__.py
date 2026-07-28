@@ -1,3 +1,4 @@
+from app.dependencies.attachment import get_attachment_repository, get_attachment_service
 from app.dependencies.auth import (
     get_auth_service,
     get_current_active_user,
@@ -31,4 +32,6 @@ __all__ = [
     "get_ticket_repository",
     "get_ticket_service",
     "get_viewable_ticket",
+    "get_attachment_repository",
+    "get_attachment_service",
 ]

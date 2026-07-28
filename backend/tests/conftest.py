@@ -1,17 +1,20 @@
 from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from app.core.security import create_access_token, hash_password
+from app.dependencies.attachment import get_attachment_service
 from app.dependencies.auth import get_auth_service, get_user_repository
 from app.dependencies.category import get_category_service
 from app.dependencies.comment import get_comment_service
 from app.dependencies.history import get_history_service
 from app.dependencies.ticket import get_ticket_service
 from app.main import app
+from app.models.attachment import Attachment
 from app.models.category import Category
 from app.models.comment import Comment
 from app.models.enums import TicketPriority, TicketStatus
@@ -19,6 +22,7 @@ from app.models.role import Role
 from app.models.ticket import Ticket
 from app.models.ticket_history import TicketHistory
 from app.models.user import User
+from app.services.attachment_service import AttachmentService
 from app.services.auth_service import AuthService
 from app.services.category_service import CategoryService
 from app.services.comment_service import CommentService
@@ -199,6 +203,59 @@ class FakeHistoryRepository:
 
     def list_for_ticket(self, ticket_id: int) -> list[TicketHistory]:
         return [e for e in self._entries if e.ticket_id == ticket_id]
+
+
+class FakeAttachmentRepository:
+    """In-memory stand-in for AttachmentRepository. Same rationale as the others."""
+
+    def __init__(self, attachments: list[Attachment] | None = None) -> None:
+        self._by_id = {a.id: a for a in (attachments or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+
+    def get_by_id(self, id_: int) -> Attachment | None:
+        return self._by_id.get(id_)
+
+    def list_for_ticket(self, ticket_id: int) -> list[Attachment]:
+        return [a for a in self._by_id.values() if a.ticket_id == ticket_id]
+
+    def create(self, obj: Attachment) -> Attachment:
+        obj.id = self._next_id
+        self._next_id += 1
+        obj.created_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
+    def delete(self, obj: Attachment) -> None:
+        self._by_id.pop(obj.id, None)
+
+
+class FakeStorageService:
+    """In-memory stand-in for StorageService - no real filesystem access.
+
+    AttachmentService only calls a few narrow methods, so a dict-backed
+    double is enough to exercise upload/download/delete without touching
+    disk during the API test suite. Real filesystem behavior (including
+    path-traversal defense) is covered separately in test_storage_service.py
+    against a real temp directory.
+    """
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self._counter = 0
+
+    def generate_stored_filename(self, original_filename: str) -> str:
+        extension = Path(original_filename or "").suffix.lower()
+        self._counter += 1
+        return f"fake-{self._counter}{extension}"
+
+    def save(self, stored_filename: str, content: bytes) -> None:
+        self.files[stored_filename] = content
+
+    def load(self, stored_filename: str) -> bytes:
+        return self.files[stored_filename]
+
+    def delete(self, stored_filename: str) -> None:
+        self.files.pop(stored_filename, None)
 
 
 class FakeSession:
@@ -450,6 +507,24 @@ def assigned_ticket_comment(assigned_ticket: Ticket, active_employee_user: User)
 
 
 @pytest.fixture
+def employee_attachment(employee_ticket: Ticket, active_employee_user: User) -> Attachment:
+    """An attachment on employee_ticket, uploaded by active_employee_user."""
+    attachment = Attachment(
+        id=1,
+        ticket_id=employee_ticket.id,
+        uploaded_by_user_id=active_employee_user.id,
+        original_filename="screenshot.png",
+        stored_filename="existing-file.png",
+        file_path="existing-file.png",
+        content_type="image/png",
+        file_size=17,
+        created_at=datetime.now(timezone.utc),
+    )
+    attachment.uploaded_by = active_employee_user
+    return attachment
+
+
+@pytest.fixture
 def user_repository(
     active_admin_user: User,
     inactive_user: User,
@@ -499,6 +574,21 @@ def history_repository() -> FakeHistoryRepository:
 
 
 @pytest.fixture
+def storage_service() -> FakeStorageService:
+    return FakeStorageService()
+
+
+@pytest.fixture
+def attachment_repository(
+    employee_attachment: Attachment, storage_service: FakeStorageService
+) -> FakeAttachmentRepository:
+    # Pre-populate the fake filesystem so a download of the fixture
+    # attachment (created outside any upload call) has real bytes to return.
+    storage_service.files[employee_attachment.file_path] = b"fake-png-bytes"
+    return FakeAttachmentRepository([employee_attachment])
+
+
+@pytest.fixture
 def auth_headers() -> Callable[[User], dict[str, str]]:
     """Build an Authorization header for a given (unsaved) fixture user."""
 
@@ -516,10 +606,12 @@ def client(
     ticket_repository: FakeTicketRepository,
     comment_repository: FakeCommentRepository,
     history_repository: FakeHistoryRepository,
+    attachment_repository: FakeAttachmentRepository,
+    storage_service: FakeStorageService,
 ) -> Iterator[TestClient]:
-    # One shared HistoryService instance so ticket-mutation history and
-    # comment-mutation history both land in the same store - a single
-    # GET /history call in a test can then observe entries from both.
+    # One shared HistoryService instance so ticket-mutation, comment-mutation,
+    # and attachment-mutation history all land in the same store - a single
+    # GET /history call in a test can then observe entries from any of them.
     history_service = HistoryService(db=FakeSession(), history_repository=history_repository)
 
     app.dependency_overrides[get_user_repository] = lambda: user_repository
@@ -542,6 +634,12 @@ def client(
         history_service=history_service,
     )
     app.dependency_overrides[get_history_service] = lambda: history_service
+    app.dependency_overrides[get_attachment_service] = lambda: AttachmentService(
+        db=FakeSession(),
+        attachment_repository=attachment_repository,
+        storage_service=storage_service,
+        history_service=history_service,
+    )
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
