@@ -30,6 +30,7 @@ from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidTechnicianAssignmentError,
     TicketCategoryNotFoundError,
+    TicketLocationNotFoundError,
     TicketNotEditableError,
     TicketNotFoundError,
     TicketPermissionError,
@@ -63,7 +64,7 @@ def patch_ticket(
     ticket_service: TicketService = Depends(get_ticket_service),
     current_user: User = Depends(require_roles(*_VIEW_ROLES)),
 ) -> DataResponse[TicketResponse]:
-    """Partial update of title/description/location/category_id/priority_id.
+    """Partial update of title/description/location_id/category_id/priority_id.
 
     Assignment, status, requester, and timestamps stay out of reach here -
     they're each owned by their own endpoint/mechanism.
@@ -85,6 +86,10 @@ def patch_ticket(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Category not found") from exc
     except TicketPriorityNotFoundError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Priority not found") from exc
+    except TicketLocationNotFoundError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Location not found or inactive"
+        ) from exc
     return DataResponse(data=TicketResponse.model_validate(ticket), msg="Ticket updated successfully")
 
 
@@ -242,6 +247,10 @@ def create_ticket_new(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Category not found") from exc
     except TicketPriorityNotFoundError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Priority not found") from exc
+    except TicketLocationNotFoundError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Location not found or inactive"
+        ) from exc
     except TicketRequesterNotFoundError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Requester not found") from exc
     except TicketPermissionError as exc:

@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import TicketStatus
 from app.schemas.category import CategoryResponse
+from app.schemas.location import LocationResponse
 from app.schemas.priority import PriorityResponse
 
 
@@ -23,7 +24,7 @@ class TicketContentBase(BaseModel):
 
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1)
-    location: str | None = Field(default=None, max_length=200)
+    location_id: int | None = None
     category_id: int
     priority_id: int
 
@@ -39,14 +40,14 @@ class TicketContentBase(BaseModel):
 class TicketPatch(BaseModel):
     """PATCH /tickets/{id} request body - partial update.
 
-    Only title/description/location/category_id/priority_id may change
+    Only title/description/location_id/category_id/priority_id may change
     here. Assignment and status stay in their own dedicated endpoints, and
     requester/timestamps are never client-controlled.
     """
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, min_length=1)
-    location: str | None = None
+    location_id: int | None = None
     category_id: int | None = None
     priority_id: int | None = None
 
@@ -94,7 +95,7 @@ class TicketResponse(BaseModel):
     ticket_number: str
     title: str
     description: str
-    location: str | None
+    location: LocationResponse | None
     status: TicketStatus
     priority: PriorityResponse
     category: CategoryResponse

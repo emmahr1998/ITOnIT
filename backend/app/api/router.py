@@ -6,6 +6,7 @@ from app.api.routes import (
     categories,
     departments,
     health,
+    locations,
     priorities,
     tickets,
     users,
@@ -16,6 +17,7 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(categories.router)
 api_router.include_router(departments.router)
+api_router.include_router(locations.router)
 api_router.include_router(priorities.router)
 api_router.include_router(users.router)
 api_router.include_router(tickets.flat_router)
