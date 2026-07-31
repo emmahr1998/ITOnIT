@@ -13,6 +13,7 @@ from app.dependencies.category import get_category_service
 from app.dependencies.comment import get_comment_service
 from app.dependencies.department import get_department_service
 from app.dependencies.history import get_history_service
+from app.dependencies.location import get_location_service
 from app.dependencies.priority import get_priority_service
 from app.dependencies.ticket import get_ticket_service
 from app.dependencies.user import get_user_service
@@ -22,6 +23,7 @@ from app.models.category import Category
 from app.models.comment import Comment
 from app.models.department import Department
 from app.models.enums import TicketStatus
+from app.models.location import Location
 from app.models.priority import Priority
 from app.models.role import Role
 from app.models.ticket import Ticket
@@ -33,6 +35,7 @@ from app.services.category_service import CategoryService
 from app.services.comment_service import CommentService
 from app.services.department_service import DepartmentService
 from app.services.history_service import HistoryService
+from app.services.location_service import LocationService
 from app.services.priority_service import PriorityService
 from app.services.ticket_service import TicketService
 from app.services.user_service import UserService
@@ -228,6 +231,38 @@ class FakeDepartmentRepository:
         return obj
 
     def update(self, obj: Department) -> Department:
+        obj.updated_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
+
+class FakeLocationRepository:
+    """In-memory stand-in for LocationRepository. Same rationale as FakeCategoryRepository."""
+
+    def __init__(self, locations: list[Location] | None = None) -> None:
+        self._by_id = {location.id: location for location in (locations or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+
+    def get_all(self) -> list[Location]:
+        return list(self._by_id.values())
+
+    def get_by_id(self, id_: int) -> Location | None:
+        return self._by_id.get(id_)
+
+    def get_by_title(self, title: str) -> Location | None:
+        target = title.strip().lower()
+        return next((loc for loc in self._by_id.values() if loc.title.lower() == target), None)
+
+    def create(self, obj: Location) -> Location:
+        obj.id = self._next_id
+        self._next_id += 1
+        now = datetime.now(timezone.utc)
+        obj.created_at = now
+        obj.updated_at = now
+        self._by_id[obj.id] = obj
+        return obj
+
+    def update(self, obj: Location) -> Location:
         obj.updated_at = datetime.now(timezone.utc)
         self._by_id[obj.id] = obj
         return obj
@@ -534,6 +569,25 @@ def critical_priority() -> Priority:
 
 
 @pytest.fixture
+def head_office_location() -> Location:
+    now = datetime.now(timezone.utc)
+    return Location(id=1, title="Head Office - Floor 2", is_active=True, created_at=now, updated_at=now)
+
+
+@pytest.fixture
+def branch_office_location() -> Location:
+    now = datetime.now(timezone.utc)
+    return Location(id=2, title="Branch Office", is_active=True, created_at=now, updated_at=now)
+
+
+@pytest.fixture
+def inactive_location() -> Location:
+    """A retired location - no longer selectable, but a ticket may still reference it."""
+    now = datetime.now(timezone.utc)
+    return Location(id=3, title="Old Warehouse", is_active=False, created_at=now, updated_at=now)
+
+
+@pytest.fixture
 def active_admin_user(admin_role: Role, it_department: Department) -> User:
     now = datetime.now(timezone.utc)
     user = User(
@@ -702,7 +756,10 @@ def software_category() -> Category:
 
 @pytest.fixture
 def employee_ticket(
-    hardware_category: Category, medium_priority: Priority, active_employee_user: User
+    hardware_category: Category,
+    medium_priority: Priority,
+    head_office_location: Location,
+    active_employee_user: User,
 ) -> Ticket:
     """A brand-new ticket, owned by active_employee_user, not yet assigned."""
     now = datetime.now(timezone.utc)
@@ -711,7 +768,7 @@ def employee_ticket(
         ticket_number="IT-2026-000001",
         title="Laptop will not boot",
         description="Screen stays black after pressing the power button.",
-        location="Building A, Desk 12",
+        location_id=head_office_location.id,
         status=TicketStatus.NEW,
         priority_id=medium_priority.id,
         category_id=hardware_category.id,
@@ -722,6 +779,7 @@ def employee_ticket(
     )
     ticket.category = hardware_category
     ticket.priority = medium_priority
+    ticket.location = head_office_location
     ticket.created_by = active_employee_user
     ticket.assigned_technician = None
     return ticket
@@ -741,7 +799,7 @@ def assigned_ticket(
         ticket_number="IT-2026-000002",
         title="VPN disconnects repeatedly",
         description="The VPN client drops the connection every few minutes.",
-        location=None,
+        location_id=None,
         status=TicketStatus.ASSIGNED,
         priority_id=high_priority.id,
         category_id=software_category.id,
@@ -858,6 +916,15 @@ def priority_repository(
 
 
 @pytest.fixture
+def location_repository(
+    head_office_location: Location,
+    branch_office_location: Location,
+    inactive_location: Location,
+) -> FakeLocationRepository:
+    return FakeLocationRepository([head_office_location, branch_office_location, inactive_location])
+
+
+@pytest.fixture
 def category_repository(
     hardware_category: Category, software_category: Category
 ) -> FakeCategoryRepository:
@@ -915,6 +982,7 @@ def client(
     role_repository: FakeRoleRepository,
     department_repository: FakeDepartmentRepository,
     priority_repository: FakePriorityRepository,
+    location_repository: FakeLocationRepository,
     category_repository: FakeCategoryRepository,
     ticket_repository: FakeTicketRepository,
     comment_repository: FakeCommentRepository,
@@ -940,6 +1008,9 @@ def client(
     app.dependency_overrides[get_priority_service] = lambda: PriorityService(
         db=FakeSession(), priority_repository=priority_repository
     )
+    app.dependency_overrides[get_location_service] = lambda: LocationService(
+        db=FakeSession(), location_repository=location_repository
+    )
     app.dependency_overrides[get_user_service] = lambda: UserService(
         db=FakeSession(),
         user_repository=user_repository,
@@ -951,8 +1022,10 @@ def client(
         ticket_repository=ticket_repository,
         category_repository=category_repository,
         priority_repository=priority_repository,
+        location_repository=location_repository,
         user_repository=user_repository,
         history_service=history_service,
+        storage_service=storage_service,
     )
     app.dependency_overrides[get_comment_service] = lambda: CommentService(
         db=FakeSession(),

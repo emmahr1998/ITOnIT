@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     ATTACHMENT_STORAGE_PATH: str = "storage/attachments"
     MAX_ATTACHMENT_SIZE_BYTES: int = 10 * 1024 * 1024
 
+    # CORS: browser origins allowed to call this API. Defaults cover the
+    # Vite React dev server (5173) and the common CRA/alternate dev port
+    # (3000). Override via the CORS_ORIGINS env var (a JSON array of
+    # origins) to add/restrict origins per environment - see .env.example.
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+
 
 @lru_cache
 def get_settings() -> Settings:

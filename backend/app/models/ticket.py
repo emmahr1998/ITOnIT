@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.attachment import Attachment
     from app.models.category import Category
     from app.models.comment import Comment
+    from app.models.location import Location
     from app.models.priority import Priority
     from app.models.ticket_history import TicketHistory
     from app.models.user import User
@@ -28,7 +29,7 @@ class Ticket(TimestampMixin, Base):
     ticket_number: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True)
     status: Mapped[TicketStatus] = mapped_column(
         Enum(
             TicketStatus,
@@ -55,6 +56,7 @@ class Ticket(TimestampMixin, Base):
 
     category: Mapped["Category"] = relationship(back_populates="tickets")
     priority: Mapped["Priority"] = relationship(back_populates="tickets")
+    location: Mapped["Location | None"] = relationship(back_populates="tickets")
     created_by: Mapped["User"] = relationship(
         back_populates="created_tickets", foreign_keys=[created_by_user_id]
     )

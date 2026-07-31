@@ -25,6 +25,11 @@ from app.services.department_service import (
     DepartmentTitleConflictError,
 )
 from app.services.history_service import HistoryService
+from app.services.location_service import (
+    LocationNotFoundError,
+    LocationService,
+    LocationTitleConflictError,
+)
 from app.services.priority_service import (
     PriorityNotFoundError,
     PriorityService,
@@ -35,6 +40,7 @@ from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidTechnicianAssignmentError,
     TicketCategoryNotFoundError,
+    TicketLocationNotFoundError,
     TicketNotEditableError,
     TicketNotFoundError,
     TicketPermissionError,
@@ -65,6 +71,7 @@ __all__ = [
     "TicketNotFoundError",
     "TicketCategoryNotFoundError",
     "TicketPriorityNotFoundError",
+    "TicketLocationNotFoundError",
     "TicketRequesterNotFoundError",
     "TicketPermissionError",
     "TicketNotEditableError",
@@ -79,6 +86,9 @@ __all__ = [
     "PriorityService",
     "PriorityNotFoundError",
     "PriorityTitleConflictError",
+    "LocationService",
+    "LocationNotFoundError",
+    "LocationTitleConflictError",
     "HistoryService",
     "StorageService",
     "AttachmentService",

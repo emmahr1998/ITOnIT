@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.models.category import Category
 from app.models.department import Department
+from app.models.location import Location
 from app.models.priority import Priority
 from app.models.ticket import Ticket
 from app.models.user import User
@@ -27,13 +28,14 @@ def test_ticket_new_creates_ticket_for_caller(
     auth_headers: Callable[[User], dict[str, str]],
     hardware_category: Category,
     high_priority: Priority,
+    head_office_location: Location,
 ) -> None:
     response = client.post(
         "/ticket-new",
         json={
             "title": "Keyboard keys sticking",
             "description": "Several keys need excessive force to register.",
-            "location": "Building A, Desk 3",
+            "location_id": head_office_location.id,
             "category_id": hardware_category.id,
             "priority_id": high_priority.id,
         },
@@ -42,7 +44,8 @@ def test_ticket_new_creates_ticket_for_caller(
     assert response.status_code == 201
     body = response.json()["data"]
     assert body["created_by"]["id"] == active_employee_user.id
-    assert body["location"] == "Building A, Desk 3"
+    assert body["location"]["id"] == head_office_location.id
+    assert body["location"]["title"] == head_office_location.title
     assert body["priority"]["id"] == high_priority.id
     assert body["status"] == "NEW"
 
@@ -173,6 +176,28 @@ def test_ticket_new_unknown_priority_returns_400(
             "description": "y",
             "category_id": hardware_category.id,
             "priority_id": 999999,
+        },
+        headers=auth_headers(active_employee_user),
+    )
+    assert response.status_code == 400
+
+
+def test_ticket_new_rejects_inactive_location(
+    client: TestClient,
+    active_employee_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+    hardware_category: Category,
+    medium_priority: Priority,
+    inactive_location: Location,
+) -> None:
+    response = client.post(
+        "/ticket-new",
+        json={
+            "title": "x",
+            "description": "y",
+            "category_id": hardware_category.id,
+            "priority_id": medium_priority.id,
+            "location_id": inactive_location.id,
         },
         headers=auth_headers(active_employee_user),
     )
@@ -367,17 +392,33 @@ def test_patch_ticket_partial_update_changes_only_given_fields(
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
     employee_ticket: Ticket,
+    branch_office_location: Location,
 ) -> None:
     response = client.patch(
         f"/tickets/{employee_ticket.id}",
-        json={"location": "Building C, Desk 9"},
+        json={"location_id": branch_office_location.id},
         headers=auth_headers(active_employee_user),
     )
     assert response.status_code == 200
     body = response.json()["data"]
-    assert body["location"] == "Building C, Desk 9"
+    assert body["location"]["id"] == branch_office_location.id
     assert body["title"] == employee_ticket.title
     assert body["description"] == employee_ticket.description
+
+
+def test_patch_ticket_rejects_inactive_location(
+    client: TestClient,
+    active_employee_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+    employee_ticket: Ticket,
+    inactive_location: Location,
+) -> None:
+    response = client.patch(
+        f"/tickets/{employee_ticket.id}",
+        json={"location_id": inactive_location.id},
+        headers=auth_headers(active_employee_user),
+    )
+    assert response.status_code == 400
 
 
 def test_patch_ticket_changes_priority(

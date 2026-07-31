@@ -10,7 +10,6 @@ from app.db.database import Base
 from app.models.mixins import CreatedAtMixin
 
 if TYPE_CHECKING:
-    from app.models.attachment import Attachment
     from app.models.ticket import Ticket
     from app.models.user import User
 
@@ -28,4 +27,3 @@ class Comment(CreatedAtMixin, Base):
 
     ticket: Mapped["Ticket"] = relationship(back_populates="comments")
     author: Mapped["User"] = relationship(back_populates="comments")
-    attachments: Mapped[list["Attachment"]] = relationship(back_populates="comment")

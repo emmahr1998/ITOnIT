@@ -4,6 +4,7 @@ from app.models.category import Category
 from app.models.comment import Comment
 from app.models.department import Department
 from app.models.enums import TicketStatus
+from app.models.location import Location
 from app.models.priority import Priority
 from app.models.role import Role
 from app.models.ticket import Ticket
@@ -16,6 +17,7 @@ __all__ = [
     "User",
     "Department",
     "Category",
+    "Location",
     "Priority",
     "Ticket",
     "Comment",

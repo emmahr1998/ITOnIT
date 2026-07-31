@@ -5,15 +5,18 @@ from sqlalchemy.orm import Session
 
 from app.models.category import Category
 from app.models.enums import TicketStatus
+from app.models.location import Location
 from app.models.priority import Priority
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.repositories.category import CategoryRepository
+from app.repositories.location import LocationRepository
 from app.repositories.priority import PriorityRepository
 from app.repositories.ticket import TicketRepository
 from app.repositories.user import UserRepository
 from app.schemas.ticket import TicketNewCreate, TicketPatch
 from app.services.history_service import HistoryService
+from app.services.storage_service import StorageService
 
 TECHNICIAN_ROLE_NAME = "Technician"
 _MANAGE_ROLE_NAMES = ("Manager", "Administrator")
@@ -43,6 +46,13 @@ class TicketCategoryNotFoundError(Exception):
 
 class TicketPriorityNotFoundError(Exception):
     """Raised when a ticket create/update references a priority id that does not exist."""
+
+
+class TicketLocationNotFoundError(Exception):
+    """Raised when a ticket create/update references a location id that does not exist
+    or is deactivated (is_active=False) - a deactivated location may no longer be
+    newly selected, though tickets that already reference it are unaffected.
+    """
 
 
 class TicketRequesterNotFoundError(Exception):
@@ -89,8 +99,10 @@ class TicketService:
         ticket_repository: TicketRepository | None = None,
         category_repository: CategoryRepository | None = None,
         priority_repository: PriorityRepository | None = None,
+        location_repository: LocationRepository | None = None,
         user_repository: UserRepository | None = None,
         history_service: HistoryService | None = None,
+        storage_service: StorageService | None = None,
     ) -> None:
         self._db = db
         self._ticket_repository = (
@@ -102,11 +114,17 @@ class TicketService:
         self._priority_repository = (
             priority_repository if priority_repository is not None else PriorityRepository(db)
         )
+        self._location_repository = (
+            location_repository if location_repository is not None else LocationRepository(db)
+        )
         self._user_repository = (
             user_repository if user_repository is not None else UserRepository(db)
         )
         self._history_service = (
             history_service if history_service is not None else HistoryService(db)
+        )
+        self._storage_service = (
+            storage_service if storage_service is not None else StorageService()
         )
 
     # ---- ownership -----------------------------------------------------
@@ -136,6 +154,12 @@ class TicketService:
         if priority is None:
             raise TicketPriorityNotFoundError
         return priority
+
+    def _get_location_or_raise(self, location_id: int) -> Location:
+        location = self._location_repository.get_by_id(location_id)
+        if location is None or not location.is_active:
+            raise TicketLocationNotFoundError
+        return location
 
     # ---- reads -----------------------------------------------------------
 
@@ -195,7 +219,7 @@ class TicketService:
         *,
         title: str,
         description: str,
-        location: str | None,
+        location: Location | None,
         category: Category,
         priority: Priority,
     ) -> Ticket:
@@ -205,7 +229,7 @@ class TicketService:
                 ticket_number=self._generate_ticket_number(),
                 title=title,
                 description=description,
-                location=location,
+                location_id=location.id if location is not None else None,
                 status=TicketStatus.NEW,
                 priority_id=priority.id,
                 category_id=category.id,
@@ -217,6 +241,7 @@ class TicketService:
             # dependency on session/refresh timing.
             ticket.category = category
             ticket.priority = priority
+            ticket.location = location
             ticket.created_by = requester
             ticket.assigned_technician = None
             try:
@@ -243,6 +268,11 @@ class TicketService:
         """
         category = self._get_category_or_raise(payload.category_id)
         priority = self._get_priority_or_raise(payload.priority_id)
+        location = (
+            self._get_location_or_raise(payload.location_id)
+            if payload.location_id is not None
+            else None
+        )
 
         requester = current_user
         if (
@@ -260,13 +290,13 @@ class TicketService:
             requester,
             title=payload.title,
             description=payload.description,
-            location=payload.location,
+            location=location,
             category=category,
             priority=priority,
         )
 
     def patch_ticket(self, current_user: User, ticket_id: int, payload: TicketPatch) -> Ticket:
-        """PATCH /tickets/{id}: partial update of title/description/location/
+        """PATCH /tickets/{id}: partial update of title/description/location_id/
         category_id/priority_id only. Assignment, status, requester, and
         timestamps are never touched here - each still goes through its own
         dedicated endpoint/mechanism.
@@ -295,11 +325,21 @@ class TicketService:
                 ticket.id, current_user, "description", ticket.description, payload.description
             )
             ticket.description = payload.description
-        if "location" in fields_set and ticket.location != payload.location:
-            self._history_service.record(
-                ticket.id, current_user, "location", ticket.location, payload.location
+        if "location_id" in fields_set and ticket.location_id != payload.location_id:
+            location = (
+                self._get_location_or_raise(payload.location_id)
+                if payload.location_id is not None
+                else None
             )
-            ticket.location = payload.location
+            self._history_service.record(
+                ticket.id,
+                current_user,
+                "location",
+                ticket.location.title if ticket.location is not None else None,
+                location.title if location is not None else None,
+            )
+            ticket.location_id = payload.location_id
+            ticket.location = location
         if (
             "category_id" in fields_set
             and payload.category_id is not None
@@ -332,8 +372,18 @@ class TicketService:
         ticket = self._ticket_repository.get_by_id(ticket_id)
         if ticket is None:
             raise TicketNotFoundError
+
+        # Capture file paths before the cascade delete removes the
+        # attachment rows. The DB delete commits first, then physical files
+        # are removed - same ordering rationale as
+        # AttachmentService.delete_attachment: a failed physical delete
+        # leaves a harmless orphaned file rather than a DB row pointing at
+        # nothing.
+        file_paths = [attachment.file_path for attachment in ticket.attachments]
         self._ticket_repository.delete(ticket)
         self._db.commit()
+        for file_path in file_paths:
+            self._storage_service.delete(file_path)
 
     def assign_technician(
         self, current_user: User, ticket_id: int, technician_id: int

@@ -3,6 +3,7 @@ from collections.abc import Callable
 import pytest
 from fastapi.testclient import TestClient
 
+from app.models.attachment import Attachment
 from app.models.category import Category
 from app.models.enums import TicketStatus
 from app.models.priority import Priority
@@ -15,7 +16,12 @@ from app.services.ticket_service import (
     TicketNotFoundError,
     TicketService,
 )
-from tests.conftest import FakeHistoryRepository, FakeTicketRepository, FakeUserRepository
+from tests.conftest import (
+    FakeHistoryRepository,
+    FakeStorageService,
+    FakeTicketRepository,
+    FakeUserRepository,
+)
 
 # ---------------------------------------------------------------------------
 # Ticket creation and collection listing now live at POST /ticket-new and
@@ -122,6 +128,24 @@ def test_delete_ticket_unknown_id_returns_404(
 ) -> None:
     response = client.delete("/tickets/999999", headers=auth_headers(active_admin_user))
     assert response.status_code == 404
+
+
+def test_delete_ticket_removes_its_attachments_physical_files(
+    client: TestClient,
+    active_admin_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+    employee_ticket: Ticket,
+    employee_attachment: Attachment,
+    storage_service: FakeStorageService,
+) -> None:
+    """Deleting a ticket must not just remove the DB rows (cascade) - the
+    physical file on disk has to go too, or it leaks forever."""
+    employee_ticket.attachments.append(employee_attachment)
+    assert employee_attachment.file_path in storage_service.files
+
+    response = client.delete(f"/tickets/{employee_ticket.id}", headers=auth_headers(active_admin_user))
+    assert response.status_code == 204
+    assert employee_attachment.file_path not in storage_service.files
 
 
 # ---------------------------------------------------------------------------

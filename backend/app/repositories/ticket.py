@@ -9,6 +9,7 @@ from app.repositories.base import BaseRepository
 _EAGER_OPTIONS = (
     selectinload(Ticket.category),
     selectinload(Ticket.priority),
+    selectinload(Ticket.location),
     selectinload(Ticket.created_by),
     selectinload(Ticket.assigned_technician),
 )
