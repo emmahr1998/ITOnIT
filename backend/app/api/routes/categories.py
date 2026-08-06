@@ -12,8 +12,8 @@ from app.services.category_service import (
 
 router = APIRouter(prefix="/categories", tags=["Categories"])
 
-_VIEW_ROLES = ("Employee", "Technician", "Manager", "Administrator")
-_MANAGE_ROLES = ("Manager", "Administrator")
+_VIEW_ROLES = ("Employee", "Technician", "Company Administrator")
+_MANAGE_ROLES = ("Company Administrator",)
 
 
 @router.get("", response_model=list[CategoryResponse])

@@ -12,7 +12,7 @@ from app.services.priority_service import (
 
 router = APIRouter(prefix="/priorities", tags=["Priorities"])
 
-_MANAGE_ROLES = ("Manager", "Administrator")
+_MANAGE_ROLES = ("Company Administrator",)
 
 
 @router.get("", response_model=DataResponse[list[PriorityResponse]])

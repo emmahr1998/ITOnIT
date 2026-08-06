@@ -45,11 +45,11 @@ router = APIRouter(prefix="/tickets", tags=["Tickets"])
 # /all-tickets (not nested under /tickets) - see flat_router below.
 flat_router = APIRouter(tags=["Tickets"])
 
-_CREATE_ROLES = ("Employee", "Manager", "Administrator")
-_VIEW_ROLES = ("Employee", "Technician", "Manager", "Administrator")
-_DELETE_ROLES = ("Manager", "Administrator")
-_ASSIGN_ROLES = ("Manager", "Administrator")
-_STATUS_ROLES = ("Technician", "Manager", "Administrator")
+_CREATE_ROLES = ("Employee", "Company Administrator")
+_VIEW_ROLES = ("Employee", "Technician", "Company Administrator")
+_DELETE_ROLES = ("Company Administrator",)
+_ASSIGN_ROLES = ("Company Administrator",)
+_STATUS_ROLES = ("Technician", "Company Administrator")
 
 
 @router.get("/{ticket_id}", response_model=TicketResponse)
@@ -144,8 +144,9 @@ def change_status(
 # ---------------------------------------------------------------------------
 # Comments - nested under a ticket. get_viewable_ticket already applies the
 # exact same view-ownership rule the Comment Rules table requires (Employees
-# on their own tickets, Technicians on assigned tickets, Managers/Admins
-# everywhere), so no separate role check is needed to reach these routes.
+# on their own tickets, Technicians on assigned tickets, Company
+# Administrators everywhere), so no separate role check is needed to reach
+# these routes.
 # ---------------------------------------------------------------------------
 
 
@@ -237,7 +238,7 @@ def create_ticket_new(
     ticket_service: TicketService = Depends(get_ticket_service),
     current_user: User = Depends(require_roles(*_CREATE_ROLES)),
 ) -> DataResponse[TicketResponse]:
-    """The requester is always the caller, unless a Manager/Administrator
+    """The requester is always the caller, unless a Company Administrator
     explicitly sets requester_user_id to create the ticket on someone
     else's behalf.
     """
@@ -256,7 +257,7 @@ def create_ticket_new(
     except TicketPermissionError as exc:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Only a Manager or Administrator may create a ticket for another user",
+            "Only a Company Administrator may create a ticket for another user",
         ) from exc
     return DataResponse(data=TicketResponse.model_validate(ticket), msg="Ticket created successfully")
 
@@ -278,8 +279,8 @@ def get_all_tickets(
     current_user: User = Depends(require_roles(*_VIEW_ROLES)),
 ) -> DataResponse[list[TicketResponse]]:
     """Same visibility rules as GET /tickets (Employee own, Technician
-    assigned, Manager/Admin all), plus pagination, sorting, and the full
-    filter/search set.
+    assigned, Company Administrator all), plus pagination, sorting, and the
+    full filter/search set.
     """
     tickets = ticket_service.list_tickets(
         current_user,

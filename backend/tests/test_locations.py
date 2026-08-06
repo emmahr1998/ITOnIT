@@ -11,9 +11,7 @@ from app.services.location_service import LocationService, LocationTitleConflict
 from tests.conftest import FakeLocationRepository, FakeSession
 
 # ---------------------------------------------------------------------------
-# Create - Administrator only (unlike Departments/Priorities, Manager is NOT
-# allowed to manage locations, per the explicit "Admin can create/edit/
-# deactivate" requirement).
+# Create - Company Administrator only.
 # ---------------------------------------------------------------------------
 
 
@@ -33,16 +31,28 @@ def test_create_location_succeeds_for_admin(
     assert body["msg"]
 
 
-@pytest.mark.parametrize(
-    "role_fixture", ["active_employee_user", "active_technician_user", "active_manager_user"]
-)
+def test_create_location_succeeds_for_a_second_company_administrator(
+    client: TestClient,
+    active_manager_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+) -> None:
+    """Company Administrator is not a singular role - a second, distinct
+    Company Administrator (active_manager_user, formerly a Manager before
+    that role was merged in) has identical permissions to the first."""
+    response = client.post(
+        "/locations", json={"title": "Warehouse C"}, headers=auth_headers(active_manager_user)
+    )
+    assert response.status_code == 201
+    assert response.json()["data"]["title"] == "Warehouse C"
+
+
+@pytest.mark.parametrize("role_fixture", ["active_employee_user", "active_technician_user"])
 def test_create_location_forbidden_for_non_admin_roles(
     client: TestClient,
     auth_headers: Callable[[User], dict[str, str]],
     role_fixture: str,
     request: pytest.FixtureRequest,
 ) -> None:
-    """Unlike Departments/Priorities, a Manager may not manage locations."""
     user = request.getfixturevalue(role_fixture)
     response = client.post(
         "/locations", json={"title": "Warehouse B"}, headers=auth_headers(user)
@@ -145,8 +155,8 @@ def test_get_location_unknown_id_returns_404(
 
 
 # ---------------------------------------------------------------------------
-# Update / Deactivate - Administrator only. There is no DELETE endpoint:
-# "deactivating" is a PATCH with is_active=False.
+# Update / Deactivate - Company Administrator only. There is no DELETE
+# endpoint: "deactivating" is a PATCH with is_active=False.
 # ---------------------------------------------------------------------------
 
 
@@ -224,9 +234,22 @@ def test_update_location_duplicate_title_returns_409(
     assert response.status_code == 409
 
 
-@pytest.mark.parametrize(
-    "role_fixture", ["active_employee_user", "active_technician_user", "active_manager_user"]
-)
+def test_update_location_succeeds_for_a_second_company_administrator(
+    client: TestClient,
+    active_manager_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+    head_office_location: Location,
+) -> None:
+    response = client.patch(
+        f"/locations/{head_office_location.id}",
+        json={"is_active": False},
+        headers=auth_headers(active_manager_user),
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["is_active"] is False
+
+
+@pytest.mark.parametrize("role_fixture", ["active_employee_user", "active_technician_user"])
 def test_update_location_forbidden_for_non_admin_roles(
     client: TestClient,
     auth_headers: Callable[[User], dict[str, str]],

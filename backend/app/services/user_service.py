@@ -11,9 +11,9 @@ from app.repositories.user import UserRepository
 from app.schemas.user import AdminPasswordSetRequest, PasswordChangeRequest, UserCreate, UserUpdate
 
 # Fields a user may change on their own profile via PATCH /users/{id}.
-# Anything else on UserUpdate is administrative and Admin-only.
+# Anything else on UserUpdate is Company-Administrator-only.
 _SELF_EDITABLE_FIELDS = frozenset({"first_name", "last_name", "phone_number", "theme"})
-_MANAGE_ROLES = frozenset({"Manager", "Administrator"})
+_MANAGE_ROLES = frozenset({"Company Administrator"})
 
 
 class UserNotFoundError(Exception):
@@ -60,8 +60,8 @@ class UserService:
     app.dependencies.auth.get_current_company_id), never from client input -
     every user this service reads, writes, or checks uniqueness against is
     confined to it. role_repository is deliberately NOT scoped: roles
-    (Employee/Technician/Manager/Administrator) are shared platform
-    vocabulary, not company-owned data.
+    (Employee/Technician/Company Administrator/System Administrator) are
+    shared platform vocabulary, not company-owned data.
     """
 
     def __init__(
@@ -116,8 +116,8 @@ class UserService:
         return user
 
     def get_user_for_viewer(self, user_id: int, viewer: User) -> User:
-        """GET /users/{id}: Manager/Admin may view anyone; everyone else
-        may only view their own record.
+        """GET /users/{id}: a Company Administrator may view anyone in
+        their own company; everyone else may only view their own record.
         """
         if viewer.role.name not in _MANAGE_ROLES and viewer.id != user_id:
             raise UserPermissionError
@@ -179,13 +179,15 @@ class UserService:
     def update_user(self, user_id: int, payload: UserUpdate, *, current_user: User) -> User:
         """Apply a partial update, enforcing the admin-vs-self field split.
 
-        An Administrator may set any field on any user. Anyone else may
-        only edit their own profile (user_id == current_user.id), and only
+        A Company Administrator may set any field on any user in their own
+        company - any number of Company Administrators may exist per
+        company, all with identical permissions here. Anyone else may only
+        edit their own profile (user_id == current_user.id), and only
         the "safe" fields in _SELF_EDITABLE_FIELDS - submitting any other
         field with a non-None value is rejected outright rather than
         silently ignored.
         """
-        is_admin = current_user.role.name == "Administrator"
+        is_admin = current_user.role.name == "Company Administrator"
         fields_set = payload.model_fields_set
 
         if not is_admin:

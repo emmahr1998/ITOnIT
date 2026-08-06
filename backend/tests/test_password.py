@@ -80,16 +80,35 @@ def test_admin_set_password_succeeds_without_current_password(
     assert new_login.status_code == 200
 
 
-def test_admin_set_password_forbidden_for_non_admin(
+def test_admin_set_password_succeeds_for_a_second_company_administrator(
     client: TestClient,
     active_manager_user: User,
+    active_employee_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+) -> None:
+    """Company Administrator is not a singular role - a second, distinct
+    Company Administrator (active_manager_user, formerly a Manager before
+    that role was merged in) has identical permissions to the first,
+    including setting another user's password, which used to be
+    Administrator-only."""
+    response = client.patch(
+        f"/users/{active_employee_user.id}/password",
+        json={"new_password": "SetByAdmin2_1!"},
+        headers=auth_headers(active_manager_user),
+    )
+    assert response.status_code == 200
+
+
+def test_admin_set_password_forbidden_for_non_admin(
+    client: TestClient,
+    active_technician_user: User,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
 ) -> None:
     response = client.patch(
         f"/users/{active_employee_user.id}/password",
         json={"new_password": "ShouldNotWork1!"},
-        headers=auth_headers(active_manager_user),
+        headers=auth_headers(active_technician_user),
     )
     assert response.status_code == 403
 

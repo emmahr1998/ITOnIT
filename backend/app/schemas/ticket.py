@@ -65,7 +65,7 @@ class TicketPatch(BaseModel):
 class TicketNewCreate(TicketContentBase):
     """POST /ticket-new request body.
 
-    requester_user_id is optional, and only Manager/Administrator callers
+    requester_user_id is optional, and only Company Administrator callers
     may set it to someone other than themselves - the service rejects it
     outright for anyone else, so a normal employee's requester is always
     the authenticated caller.

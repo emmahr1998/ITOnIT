@@ -36,32 +36,84 @@ company-code-first registration flow (`POST /companies/register`) during
 creates the company, the first Company Administrator, and seeds default
 data all in one transaction.
 
-### 2. `app/scripts/seed_initial_data.py` and `scripts/create_demo_users.py` are stale under the multi-tenant model
+### 2. ✅ RESOLVED — `app/scripts/seed_initial_data.py` and `scripts/create_demo_users.py` were stale under the multi-tenant model
 
 **Found:** during the Milestone 2 tenant-isolation audit (2026-08-06).
 
-**What's wrong:** Both are dev-only CLI scripts, not reachable from any API
-route.
-- `app/scripts/seed_initial_data.py` calls `PriorityRepository(db)` with no
-  `company_id` — `PriorityRepository.__init__` now requires it, so this
-  raises `TypeError` immediately (and even if it didn't,
-  `Priority(title=title)` has no `company_id`, which is `NOT NULL` on that
-  table since Migration 1).
-- `scripts/create_demo_users.py` calls `UserRepository(db)` (fine —
-  `UserRepository` still allows unscoped construction) but constructs each
-  `User(...)` with no `company_id`, which doesn't error (the column is
-  nullable) but produces the same orphaned, company-less account described
+**Resolved:** 2026-08-06, as part of Milestone 3's fresh-database bootstrap
+fix. No longer an open item - kept below for the historical record of what
+was wrong and why, plus how it was verified fixed.
+
+**What was wrong:** Both are dev-only CLI scripts, not reachable from any
+API route.
+- `app/scripts/seed_initial_data.py` called `PriorityRepository(db)` with no
+  `company_id` — `PriorityRepository.__init__` requires it, so this raised
+  `TypeError` immediately.
+  **Verified empirically to be worse than it first looked (2026-08-06,
+  Milestone 3 fresh-database check):** `main()` wrapped `_seed_roles`,
+  `_seed_priorities`, and `_seed_admin_user` in one try/except that called
+  `db.rollback()` on any exception before a single `db.commit()` at the
+  end. Since `_seed_priorities` crashed before that commit, the crash
+  **also rolled back the otherwise-successful role inserts from
+  `_seed_roles`** - on a genuinely fresh database, running the documented
+  setup (`alembic upgrade head` then `python -m app.scripts.seed_initial_data`)
+  left the `roles` table with only `System Administrator`, not the four
+  intended roles. Every database that had ever been bootstrapped before
+  Milestone 2 was unaffected, since its roles were seeded back when this
+  script still worked - only a brand-new setup hit this.
+- `scripts/create_demo_users.py` called `UserRepository(db)` (harmless -
+  `UserRepository` allows unscoped construction) but constructed each
+  `User(...)` with no `company_id`, which didn't error (the column is
+  nullable) but produced the same orphaned, company-less account described
   in item 1.
 
-**Why deferred:** neither script is part of the deployable application or
-reachable through any endpoint, so neither affects tenant isolation or any
-customer-facing behavior. Fixing them productively requires deciding what
-"seed data for a multi-tenant install" even means (per-company seeding is
-Milestone 5's job), so a real fix belongs with that design, not as a
-one-off patch now.
+**Fix applied:** `seed_initial_data.py` now resolves the Default Company
+seeded by the `add_companies_table` migration by its `company_code`
+(`DEFAULT001`) rather than assuming a hardcoded id, and threads that
+`company_id` through `PriorityRepository` and every seeded `Priority`/
+`User` - removing the root cause of the crash rather than restructuring
+around it. The bootstrap stays a single atomic transaction (one commit,
+one rollback) as it was before - "commit each step separately" was
+explicitly rejected as a fix, since a partially-seeded database is worse
+than an unseeded one. `create_demo_users.py` now resolves the same Default
+Company and constructs a company-scoped `UserRepository`, so it can no
+longer produce an orphaned `company_id = None` user.
 
-**Resolution:** update or retire both scripts during
-**Milestone 14 — Cleanup & docs**, once Milestone 5's per-company default
-data seeding exists and it's clear whether these standalone scripts still
-serve a purpose (e.g. a `--company-id` flag for local dev) or should be
-deleted in favor of the real registration flow.
+**Verified** against a genuinely fresh, from-scratch throwaway database
+(created and dropped for this check, dev database untouched): the full
+migration chain plus `python -m app.scripts.seed_initial_data` produces
+exactly the four roles (Employee, Technician, Company Administrator,
+System Administrator), the Default Company, all four priorities scoped to
+it, and the optional admin user scoped to it. Running the seed script (and
+`create_demo_users.py`) a second time is fully idempotent - no duplicate
+rows, no overwritten password hashes.
+
+### 3. `docs/BACKEND_ARCHITECTURE.md`, `BACKEND_API_GUIDE.md`, `BACKEND_SUMMARY.md`, `BACKEND_DIAGRAMS.md`, `database-design.md`, `PROFESSOR_DEMO_GUIDE.md`, `PROFESSOR_QA.md` predate the entire multi-tenant migration
+
+**Found:** during Milestone 3 (role consolidation), while updating role
+terminology (2026-08-06).
+
+**What's wrong:** none of these seven files mention "Company" anywhere
+(verified with a direct grep) - they document the system exactly as it was
+before Milestone 1 introduced the `Company` entity at all. This is broader
+than role naming: they don't describe tenant scoping, the `company_id`
+column, `CompanyScopedRepository`, or any of Milestones 1-3's actual
+behavior. A surface-level "Administrator" → "Company Administrator"
+find-replace across these files was deliberately **not** done, because it
+would make them look current while the underlying architecture description
+stays entirely wrong - worse than leaving them clearly out of date.
+
+**Why deferred:** rewriting these accurately requires documenting the whole
+multi-tenant architecture (companies, scoping, the eventual role/auth/
+inventory/platform surface), which is explicitly **Milestone 14**'s
+job per the architecture plan ("README/architecture docs rewritten for the
+SaaS model") - doing it piecemeal now, one migration ahead of schedule and
+before Milestones 4-13 even exist, would mean rewriting the same sections
+repeatedly as each later milestone lands.
+
+**Resolution:** comprehensive rewrite during **Milestone 14 — Cleanup &
+docs**, once the full SaaS architecture (auth, roles, inventory, platform
+console, Electron) actually exists to document. `README.md` is the one
+exception - its "Default accounts" table and role descriptions were kept
+current in Milestone 3 since they're short, concrete, and directly tied to
+`scripts/create_demo_users.py`, not a narrative architecture description.

@@ -23,14 +23,14 @@ from app.services.user_service import (
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-_MANAGE_ROLES = ("Manager", "Administrator")
+_MANAGE_ROLES = ("Company Administrator",)
 
 
 @router.post("", response_model=DataResponse[UserResponse], status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreate,
     user_service: UserService = Depends(get_user_service),
-    _current_user: User = Depends(require_roles("Administrator")),
+    _current_user: User = Depends(require_roles("Company Administrator")),
 ) -> DataResponse[UserResponse]:
     try:
         user = user_service.create_user(payload)
@@ -145,7 +145,7 @@ def admin_set_password(
     user_id: int,
     payload: AdminPasswordSetRequest,
     user_service: UserService = Depends(get_user_service),
-    _current_user: User = Depends(require_roles("Administrator")),
+    _current_user: User = Depends(require_roles("Company Administrator")),
 ) -> DataResponse[None]:
     try:
         user_service.admin_set_password(user_id, payload)

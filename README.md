@@ -12,7 +12,7 @@ This repository contains both halves of the application:
   and a SQL Server database managed through Alembic migrations.
 - **`frontend/`** — a React + TypeScript single-page app that consumes that API: a
   public landing page, self-service registration and login, and a role-aware dashboard
-  and ticket workflow for Employees, Technicians, Managers, and Administrators.
+  and ticket workflow for Employees, Technicians, and Company Administrators.
 
 For a deep technical dive into the backend specifically, see the [`docs/`](docs/)
 folder — in particular `docs/BACKEND_SUMMARY.md` (5–10 minute read) and
@@ -27,16 +27,19 @@ frontend, see [`frontend/README.md`](frontend/README.md).
   overview with links to sign in or register; no ticket or account data is ever
   exposed without logging in.
 - **Self-service registration** — anyone can create an account (`POST
-  /auth/register`), always as an Employee; the higher roles (Technician, Manager,
-  Administrator) can only be granted by an Administrator through `POST /users`.
+  /auth/register`), always as an Employee; the higher roles (Technician, Company
+  Administrator) can only be granted by a Company Administrator through `POST /users`.
 - **Authentication** — username/email + password login, Argon2 password hashing, JWT
   access tokens (short-lived) and refresh tokens (long-lived) with distinct,
   non-interchangeable token types, and a client-side silent-refresh flow so a page
   reload doesn't force a re-login.
-- **Role-based permissions** — four roles (Employee, Technician, Manager,
-  Administrator), each with a precisely defined and enforced set of allowed actions,
-  enforced independently on both the API (role checks + per-resource ownership
-  checks) and the frontend (route guards, hidden nav links).
+- **Role-based permissions** — three company-level roles (Employee, Technician,
+  Company Administrator — any number of Company Administrators may exist per
+  company, all with identical permissions), plus a platform-level System
+  Administrator role reserved for future platform-management use, each with a
+  precisely defined and enforced set of allowed actions, enforced independently
+  on both the API (role checks + per-resource ownership checks) and the
+  frontend (route guards, hidden nav links).
 - **User management** — admin-managed accounts (create, edit, deactivate — no hard
   delete, to preserve ticket/comment history and audit attribution), self-service
   profile editing (safe fields only), self-service and admin-driven password changes.
@@ -45,7 +48,7 @@ frontend, see [`frontend/README.md`](frontend/README.md).
 - **Ticket lifecycle** — creation, category/priority/location assignment, technician
   assignment, a controlled status workflow (`NEW → ASSIGNED → IN_PROGRESS ⇄
   WAITING_FOR_EMPLOYEE → RESOLVED → CLOSED`), comments, and file attachments, with
-  ticket deletion restricted to Manager/Administrator.
+  ticket deletion restricted to Company Administrator.
 - **Full audit trail** — every meaningful ticket change (field edits, assignment,
   status changes, comments, attachments) is recorded as a structured history entry:
   who, what changed, old value, new value, when.
@@ -217,20 +220,21 @@ changes go through a reviewed Alembic migration script in `backend/alembic/versi
 
 ```bash
 python -m app.scripts.seed_initial_data   # roles + default priorities (+ optional admin)
-python scripts/create_demo_users.py       # four demo accounts, one per role (dev only)
+python scripts/create_demo_users.py       # four demo accounts (dev only)
 ```
 
 Both are idempotent — safe to run repeatedly, they skip anything that already exists.
 
 ## Default accounts
 
-`python scripts/create_demo_users.py` (run from `backend/`) creates one account per
-role, for local development and demos only:
+`python scripts/create_demo_users.py` (run from `backend/`) creates four demo
+accounts, for local development and demos only - two Company Administrators
+(to demonstrate that the role isn't singular), one Technician, one Employee:
 
 | Username | Password | Role |
 |---|---|---|
-| `admin` | `Admin123!` | Administrator |
-| `manager` | `Manager123!` | Manager |
+| `admin` | `Admin123!` | Company Administrator |
+| `admin2` | `Admin2Pass123!` | Company Administrator |
 | `technician` | `Technician123!` | Technician |
 | `employee` | `Employee123!` | Employee |
 

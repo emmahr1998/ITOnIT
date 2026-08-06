@@ -90,10 +90,10 @@ def get_current_company_id(current_user: User = Depends(get_current_active_user)
 def require_roles(*allowed_role_names: str) -> Callable[..., User]:
     """Build a dependency that only allows users whose role is in allowed_role_names.
 
-    Usage: Depends(require_roles("Administrator", "Manager"))
+    Usage: Depends(require_roles("Company Administrator"))
     Role names must match app.models.role.Role.name exactly, e.g. one of the
     roles seeded by app.scripts.seed_initial_data: Employee, Technician,
-    Manager, Administrator.
+    Company Administrator, System Administrator.
     """
 
     def dependency(current_user: User = Depends(get_current_active_user)) -> User:

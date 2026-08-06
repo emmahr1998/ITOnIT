@@ -12,7 +12,7 @@ from app.services.department_service import (
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
 
-_MANAGE_ROLES = ("Manager", "Administrator")
+_MANAGE_ROLES = ("Company Administrator",)
 
 
 @router.get("", response_model=DataResponse[list[DepartmentResponse]])

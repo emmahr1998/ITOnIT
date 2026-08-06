@@ -7,7 +7,7 @@ from app.models.user import User
 from app.repositories.comment import CommentRepository
 from app.services.history_service import HistoryService
 
-_MANAGE_ROLE_NAMES = ("Manager", "Administrator")
+_MANAGE_ROLE_NAMES = ("Company Administrator",)
 
 
 class CommentNotFoundError(Exception):

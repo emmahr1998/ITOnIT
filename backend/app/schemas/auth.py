@@ -8,8 +8,8 @@ class RegisterRequest(BaseModel):
 
     Deliberately has no role_id or department_id field: every self-registered
     account is created as an Employee by AuthService.register, regardless of
-    what the client sends. Privileged roles (Technician/Manager/Administrator)
-    remain admin-provisioned only, via POST /users.
+    what the client sends. Privileged roles (Technician/Company
+    Administrator) remain admin-provisioned only, via POST /users.
     """
 
     username: str = Field(min_length=1, max_length=50)
