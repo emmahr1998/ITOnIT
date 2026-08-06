@@ -1,7 +1,118 @@
 from fastapi.testclient import TestClient
 
-from app.core.security import create_access_token, create_refresh_token
+from app.core.security import create_access_token, create_refresh_token, verify_password
 from app.models.user import User
+
+
+def test_register_creates_active_employee_and_signs_in(client: TestClient) -> None:
+    response = client.post(
+        "/auth/register",
+        json={
+            "username": "newperson",
+            "first_name": "New",
+            "last_name": "Person",
+            "email": "newperson@example.com",
+            "password": "SuperSecret1!",
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["token_type"] == "bearer"
+    assert isinstance(body["access"], str) and body["access"]
+    assert isinstance(body["refresh"], str) and body["refresh"]
+
+    # The new account can immediately reach an authenticated endpoint, and
+    # is an Employee regardless of anything the request tried to imply.
+    me_response = client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {body['access']}"}
+    )
+    assert me_response.status_code == 200
+    assert me_response.json()["role"] == "Employee"
+
+
+def test_register_hashes_the_password(client: TestClient, user_repository) -> None:
+    client.post(
+        "/auth/register",
+        json={
+            "username": "hashcheck",
+            "first_name": "Hash",
+            "last_name": "Check",
+            "email": "hashcheck@example.com",
+            "password": "SuperSecret1!",
+        },
+    )
+    created = user_repository.get_by_username("hashcheck")
+    assert created is not None
+    assert created.password_hash != "SuperSecret1!"
+    assert verify_password("SuperSecret1!", created.password_hash)
+
+
+def test_register_ignores_client_supplied_role(client: TestClient) -> None:
+    """RegisterRequest has no role_id field at all, so even trying to send
+    one has no effect - the account is still created as an Employee."""
+    response = client.post(
+        "/auth/register",
+        json={
+            "username": "wannabeadmin",
+            "first_name": "Wannabe",
+            "last_name": "Admin",
+            "email": "wannabeadmin@example.com",
+            "password": "SuperSecret1!",
+            "role_id": 1,
+        },
+    )
+    assert response.status_code == 201
+    access = response.json()["access"]
+    me_response = client.get("/auth/me", headers={"Authorization": f"Bearer {access}"})
+    assert me_response.json()["role"] == "Employee"
+
+
+def test_register_rejects_duplicate_username(
+    client: TestClient, active_admin_user: User
+) -> None:
+    response = client.post(
+        "/auth/register",
+        json={
+            "username": active_admin_user.username,
+            "first_name": "Dup",
+            "last_name": "User",
+            "email": "someoneelse@example.com",
+            "password": "SuperSecret1!",
+        },
+    )
+    assert response.status_code == 409
+    assert "username" in response.json()["detail"]
+
+
+def test_register_rejects_duplicate_email(
+    client: TestClient, active_admin_user: User
+) -> None:
+    response = client.post(
+        "/auth/register",
+        json={
+            "username": "someoneelse",
+            "first_name": "Dup",
+            "last_name": "User",
+            "email": active_admin_user.email,
+            "password": "SuperSecret1!",
+        },
+    )
+    assert response.status_code == 409
+    assert "email" in response.json()["detail"]
+
+
+def test_register_rejects_short_password(client: TestClient) -> None:
+    response = client.post(
+        "/auth/register",
+        json={
+            "username": "shortpw",
+            "first_name": "Short",
+            "last_name": "Pw",
+            "email": "shortpw@example.com",
+            "password": "short",
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_login_succeeds_with_correct_credentials(

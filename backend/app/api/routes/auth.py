@@ -7,15 +7,37 @@ from app.schemas.auth import (
     LoginRequest,
     RefreshRequest,
     RefreshResponse,
+    RegisterRequest,
     TokenResponse,
 )
 from app.services.auth_service import (
     AuthService,
+    EmailConflictError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
+    UsernameConflictError,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def register(
+    payload: RegisterRequest, auth_service: AuthService = Depends(get_auth_service)
+) -> TokenResponse:
+    """Public self-registration. Always creates an Employee-role account and
+    signs the new user in immediately - see AuthService.register.
+    """
+    try:
+        return auth_service.register(payload)
+    except UsernameConflictError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "A user with this username already exists"
+        ) from exc
+    except EmailConflictError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "A user with this email already exists"
+        ) from exc
 
 
 @router.post("/login", response_model=TokenResponse)
