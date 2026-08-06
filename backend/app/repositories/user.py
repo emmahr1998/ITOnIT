@@ -8,26 +8,48 @@ _EAGER_OPTIONS = (selectinload(User.role), selectinload(User.department))
 
 
 class UserRepository(BaseRepository[User]):
-    """User lookups needed for authentication and user management."""
+    """User lookups needed for authentication and user management.
 
-    def __init__(self, db: Session) -> None:
+    Deliberately NOT built on CompanyScopedRepository: resolving "who is
+    this JWT for" (get_current_user, via get_by_id) and "who is logging in"
+    (AuthService.authenticate, via get_by_username_or_email) both have to
+    run *before* any company is known - the company is derived from the
+    user this repository is about to find, not the other way around. Those
+    two auth-only call sites construct this repository with company_id=None
+    (unscoped, matching today's global lookup), while every user-management
+    call site (UserService, constructed via get_user_service) always
+    supplies the caller's real company_id, scoping every method below.
+    """
+
+    def __init__(self, db: Session, company_id: int | None = None) -> None:
         super().__init__(db, User)
+        self.company_id = company_id
+
+    def _scope(self, stmt):
+        if self.company_id is not None:
+            stmt = stmt.where(User.company_id == self.company_id)
+        return stmt
 
     def get_by_id(self, id_: int) -> User | None:
         """Overrides BaseRepository.get_by_id to eager-load role/department,
-        which every UserResponse needs."""
-        return self.db.scalar(select(User).where(User.id == id_).options(*_EAGER_OPTIONS))
+        which every UserResponse needs, and to apply company scoping only
+        when this instance was constructed with one (see class docstring)."""
+        return self.db.scalar(
+            self._scope(select(User).where(User.id == id_)).options(*_EAGER_OPTIONS)
+        )
 
     def get_by_email(self, email: str) -> User | None:
         """Case-insensitive lookup, since email is a login identifier."""
         return self.db.scalar(
-            select(User).where(func.lower(User.email) == email.strip().lower())
+            self._scope(select(User).where(func.lower(User.email) == email.strip().lower()))
         )
 
     def get_by_username(self, username: str) -> User | None:
         """Case-insensitive lookup by username."""
         return self.db.scalar(
-            select(User).where(func.lower(User.username) == username.strip().lower())
+            self._scope(
+                select(User).where(func.lower(User.username) == username.strip().lower())
+            )
         )
 
     def get_by_username_or_email(self, identifier: str) -> User | None:
@@ -35,13 +57,20 @@ class UserRepository(BaseRepository[User]):
 
         Lets ``username`` remain the one documented login field while still
         accepting an email address, without adding a second login field.
+
+        Always unscoped in practice: this method is only ever called from
+        AuthService.authenticate, which constructs this repository with no
+        company_id (see class docstring) - company-code-first login lookup
+        scoping is a later milestone, not touched here.
         """
         normalized = identifier.strip().lower()
         return self.db.scalar(
-            select(User).where(
-                or_(
-                    func.lower(User.username) == normalized,
-                    func.lower(User.email) == normalized,
+            self._scope(
+                select(User).where(
+                    or_(
+                        func.lower(User.username) == normalized,
+                        func.lower(User.email) == normalized,
+                    )
                 )
             )
         )
@@ -54,7 +83,7 @@ class UserRepository(BaseRepository[User]):
         is_active: bool | None,
         search: str | None,
     ):
-        stmt = select(User).options(*_EAGER_OPTIONS)
+        stmt = self._scope(select(User)).options(*_EAGER_OPTIONS)
         if role_id is not None:
             stmt = stmt.where(User.role_id == role_id)
         if department_id is not None:

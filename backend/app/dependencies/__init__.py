@@ -2,6 +2,7 @@ from app.dependencies.attachment import get_attachment_repository, get_attachmen
 from app.dependencies.auth import (
     get_auth_service,
     get_current_active_user,
+    get_current_company_id,
     get_current_user,
     get_user_repository,
     require_roles,
@@ -24,6 +25,7 @@ __all__ = [
     "get_db",
     "get_auth_service",
     "get_current_active_user",
+    "get_current_company_id",
     "get_current_user",
     "get_user_repository",
     "get_user_service",

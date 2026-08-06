@@ -283,7 +283,9 @@ def test_create_location_translates_integrity_error_to_conflict() -> None:
         def create(self, obj: Location) -> Location:
             raise IntegrityError("insert", {}, Exception("unique constraint"))
 
-    service = LocationService(db=FakeSession(), location_repository=RaisingRepository())
+    service = LocationService(
+        db=FakeSession(), company_id=1, location_repository=RaisingRepository()
+    )
 
     with pytest.raises(LocationTitleConflictError):
         service.create_location(LocationCreate(title="Warehouse B"))

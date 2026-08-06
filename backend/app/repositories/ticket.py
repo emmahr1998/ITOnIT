@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.enums import TicketStatus
 from app.models.ticket import Ticket
 from app.models.user import User
-from app.repositories.base import BaseRepository
+from app.repositories.base import CompanyScopedRepository
 
 _EAGER_OPTIONS = (
     selectinload(Ticket.category),
@@ -22,16 +22,22 @@ _SORTABLE_COLUMNS = {
 }
 
 
-class TicketRepository(BaseRepository[Ticket]):
-    """Ticket persistence: filtered listing and ticket-number sequencing."""
+class TicketRepository(CompanyScopedRepository[Ticket]):
+    """Ticket persistence: filtered listing and ticket-number sequencing.
+    Company-scoped - see CompanyScopedRepository."""
 
-    def __init__(self, db: Session) -> None:
-        super().__init__(db, Ticket)
+    def __init__(self, db: Session, company_id: int) -> None:
+        super().__init__(db, Ticket, company_id)
 
     def get_by_id(self, id_: int) -> Ticket | None:
-        """Overrides BaseRepository.get_by_id to eager-load the relationships
-        every TicketResponse needs, avoiding an N+1 query per nested field."""
-        return self.db.scalar(select(Ticket).where(Ticket.id == id_).options(*_EAGER_OPTIONS))
+        """Overrides CompanyScopedRepository.get_by_id to additionally
+        eager-load the relationships every TicketResponse needs, avoiding
+        an N+1 query per nested field."""
+        return self.db.scalar(
+            select(Ticket)
+            .where(Ticket.id == id_, Ticket.company_id == self.company_id)
+            .options(*_EAGER_OPTIONS)
+        )
 
     def get_with_filters(
         self,
@@ -56,7 +62,11 @@ class TicketRepository(BaseRepository[Ticket]):
         matching row exactly as before; GET /all-tickets is the caller that
         supplies them.
         """
-        stmt = select(Ticket).options(*_EAGER_OPTIONS)
+        stmt = (
+            select(Ticket)
+            .where(Ticket.company_id == self.company_id)
+            .options(*_EAGER_OPTIONS)
+        )
         if department_id is not None:
             stmt = stmt.join(User, Ticket.created_by_user_id == User.id).where(
                 User.department_id == department_id
@@ -90,12 +100,18 @@ class TicketRepository(BaseRepository[Ticket]):
         return list(self.db.scalars(stmt).all())
 
     def count_for_year(self, year: int) -> int:
-        """Used to generate the next sequential ticket_number for a given year."""
+        """Used to generate the next sequential ticket_number for a given
+        year - scoped to the caller's own company, since each company's
+        ticket numbering starts from 000001 independently (matching
+        ticket_number's new per-company uniqueness)."""
         return (
             self.db.scalar(
                 select(func.count())
                 .select_from(Ticket)
-                .where(Ticket.ticket_number.like(f"IT-{year}-%"))
+                .where(
+                    Ticket.ticket_number.like(f"IT-{year}-%"),
+                    Ticket.company_id == self.company_id,
+                )
             )
             or 0
         )

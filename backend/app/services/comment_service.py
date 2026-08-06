@@ -29,20 +29,28 @@ class CommentService:
     Also owns the transaction boundary for comment writes (same convention
     as CategoryService/TicketService), and drives TicketHistory recording
     for every comment mutation via HistoryService.
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input -
+    it is denormalized from the parent ticket, same as on the model itself.
     """
 
     def __init__(
         self,
         db: Session,
+        company_id: int,
         comment_repository: CommentRepository | None = None,
         history_service: HistoryService | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._comment_repository = (
-            comment_repository if comment_repository is not None else CommentRepository(db)
+            comment_repository
+            if comment_repository is not None
+            else CommentRepository(db, company_id)
         )
         self._history_service = (
-            history_service if history_service is not None else HistoryService(db)
+            history_service if history_service is not None else HistoryService(db, company_id)
         )
 
     @staticmethod
@@ -59,7 +67,12 @@ class CommentService:
         return comment
 
     def add_comment(self, current_user: User, ticket_id: int, content: str) -> Comment:
-        comment = Comment(ticket_id=ticket_id, author_user_id=current_user.id, content=content)
+        comment = Comment(
+            company_id=self._company_id,
+            ticket_id=ticket_id,
+            author_user_id=current_user.id,
+            content=content,
+        )
         comment.author = current_user
         self._comment_repository.create(comment)
         self._history_service.record(ticket_id, current_user, "comment_added", None, content)
