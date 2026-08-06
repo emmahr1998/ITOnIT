@@ -1,0 +1,17 @@
+import { apiClient } from "./client";
+import type { CurrentUser, LoginRequest, RegisterRequest, TokenResponse } from "../types/auth";
+
+export async function loginRequest(payload: LoginRequest): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>("/auth/login", payload);
+  return data;
+}
+
+export async function registerRequest(payload: RegisterRequest): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>("/auth/register", payload);
+  return data;
+}
+
+export async function fetchCurrentUser(): Promise<CurrentUser> {
+  const { data } = await apiClient.get<CurrentUser>("/auth/me");
+  return data;
+}
