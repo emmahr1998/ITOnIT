@@ -43,9 +43,35 @@ def test_create_user_succeeds_for_admin(
     assert "password_hash" not in body
 
 
-def test_create_user_forbidden_for_non_admin(
+def test_create_user_succeeds_for_a_second_company_administrator(
     client: TestClient,
     active_manager_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+    employee_role: Role,
+) -> None:
+    """Company Administrator is not a singular role - a second, distinct
+    Company Administrator (active_manager_user, formerly a Manager before
+    that role was merged in) has identical permissions to the first,
+    including user creation, which used to be Administrator-only."""
+    response = client.post(
+        "/users",
+        json={
+            "username": "newhire2",
+            "first_name": "New",
+            "last_name": "Hire",
+            "email": "newhire2@itonit.test",
+            "password": "SuperSecret1!",
+            "role_id": employee_role.id,
+        },
+        headers=auth_headers(active_manager_user),
+    )
+    assert response.status_code == 201
+    assert response.json()["data"]["username"] == "newhire2"
+
+
+def test_create_user_forbidden_for_non_admin(
+    client: TestClient,
+    active_technician_user: User,
     auth_headers: Callable[[User], dict[str, str]],
     employee_role: Role,
 ) -> None:
@@ -59,7 +85,7 @@ def test_create_user_forbidden_for_non_admin(
             "password": "SuperSecret1!",
             "role_id": employee_role.id,
         },
-        headers=auth_headers(active_manager_user),
+        headers=auth_headers(active_technician_user),
     )
     assert response.status_code == 403
 
@@ -170,7 +196,7 @@ def test_create_user_requires_authentication(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_list_users_succeeds_for_manager(
+def test_list_users_succeeds_for_company_administrator(
     client: TestClient,
     active_manager_user: User,
     auth_headers: Callable[[User], dict[str, str]],
@@ -224,7 +250,7 @@ def test_list_users_search_matches_username(
 # ---------------------------------------------------------------------------
 
 
-def test_get_user_succeeds_for_manager_viewing_someone_else(
+def test_get_user_succeeds_for_company_administrator_viewing_someone_else(
     client: TestClient,
     active_manager_user: User,
     active_employee_user: User,
@@ -279,16 +305,39 @@ def test_update_user_admin_can_change_administrative_fields(
     active_admin_user: User,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
-    manager_role: Role,
+    technician_role: Role,
 ) -> None:
     response = client.patch(
         f"/users/{active_employee_user.id}",
-        json={"role_id": manager_role.id, "is_active": False},
+        json={"role_id": technician_role.id, "is_active": False},
         headers=auth_headers(active_admin_user),
     )
     assert response.status_code == 200
     body = response.json()["data"]
-    assert body["role"] == "Manager"
+    assert body["role"] == "Technician"
+    assert body["is_active"] is False
+
+
+def test_update_user_succeeds_for_a_second_company_administrator(
+    client: TestClient,
+    active_manager_user: User,
+    active_employee_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+    technician_role: Role,
+) -> None:
+    """Company Administrator is not a singular role - a second, distinct
+    Company Administrator (active_manager_user, formerly a Manager before
+    that role was merged in) has identical permissions to the first,
+    including fully editing another user's administrative fields, which
+    used to be Administrator-only."""
+    response = client.patch(
+        f"/users/{active_employee_user.id}",
+        json={"role_id": technician_role.id, "is_active": False},
+        headers=auth_headers(active_manager_user),
+    )
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["role"] == "Technician"
     assert body["is_active"] is False
 
 
@@ -312,11 +361,11 @@ def test_update_user_self_forbidden_from_administrative_field(
     client: TestClient,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
-    manager_role: Role,
+    technician_role: Role,
 ) -> None:
     response = client.patch(
         f"/users/{active_employee_user.id}",
-        json={"role_id": manager_role.id},
+        json={"role_id": technician_role.id},
         headers=auth_headers(active_employee_user),
     )
     assert response.status_code == 403

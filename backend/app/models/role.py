@@ -12,7 +12,8 @@ if TYPE_CHECKING:
 
 
 class Role(Base):
-    """A permission level assigned to users (e.g. Employee, Technician, Manager, Administrator)."""
+    """A permission level assigned to users (Employee, Technician, Company
+    Administrator, System Administrator)."""
 
     __tablename__ = "roles"
 

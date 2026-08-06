@@ -54,8 +54,9 @@ class TicketRepository(CompanyScopedRepository[Ticket]):
         skip: int | None = None,
         limit: int | None = None,
     ) -> list[Ticket]:
-        """One filter method covers every caller: Manager/Admin's free filtering
-        and Employee/Technician's forced ownership scope are both just filters.
+        """One filter method covers every caller: Company Administrator's free
+        filtering and Employee/Technician's forced ownership scope are both
+        just filters.
 
         skip/limit default to None (no pagination applied) so the existing
         GET /tickets caller, which never passes them, keeps returning every

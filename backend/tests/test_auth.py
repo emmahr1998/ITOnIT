@@ -229,7 +229,7 @@ def test_me_succeeds_with_valid_token(client: TestClient, active_admin_user: Use
     assert response.status_code == 200
     body = response.json()
     assert body["email"] == active_admin_user.email
-    assert body["role"] == "Administrator"
+    assert body["role"] == "Company Administrator"
     assert "password_hash" not in body
     assert "password" not in body
 

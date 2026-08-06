@@ -19,7 +19,7 @@ from app.services.history_service import HistoryService
 from app.services.storage_service import StorageService
 
 TECHNICIAN_ROLE_NAME = "Technician"
-_MANAGE_ROLE_NAMES = ("Manager", "Administrator")
+_MANAGE_ROLE_NAMES = ("Company Administrator",)
 
 # NEW is this system's "OPEN" - the enum (app.models.enums.TicketStatus) has no
 # OPEN member. ASSIGNED/WAITING_FOR_EMPLOYEE are given a real, reachable place
@@ -62,7 +62,7 @@ class TicketRequesterNotFoundError(Exception):
 class TicketPermissionError(Exception):
     """Raised when the current user has no access to this ticket at all, or -
     for ticket creation - tries to set a requester other than themselves
-    without being a Manager/Administrator.
+    without being a Company Administrator.
     """
 
 
@@ -279,10 +279,10 @@ class TicketService:
         raise AssertionError("unreachable: loop always returns or re-raises")
 
     def create_ticket_new(self, current_user: User, payload: TicketNewCreate) -> Ticket:
-        """POST /ticket-new: same as create_ticket, but a Manager/Administrator
-        may set requester_user_id to create the ticket on behalf of someone
-        else. Anyone else supplying a requester_user_id other than their own
-        id is rejected outright.
+        """POST /ticket-new: same as create_ticket, but a Company
+        Administrator may set requester_user_id to create the ticket on
+        behalf of someone else. Anyone else supplying a requester_user_id
+        other than their own id is rejected outright.
         """
         category = self._get_category_or_raise(payload.category_id)
         priority = self._get_priority_or_raise(payload.priority_id)
@@ -386,7 +386,7 @@ class TicketService:
         return ticket
 
     def delete_ticket(self, ticket_id: int) -> None:
-        # Role gate (Manager/Administrator only) is enforced at the route.
+        # Role gate (Company Administrator only) is enforced at the route.
         ticket = self._ticket_repository.get_by_id(ticket_id)
         if ticket is None:
             raise TicketNotFoundError
@@ -406,7 +406,7 @@ class TicketService:
     def assign_technician(
         self, current_user: User, ticket_id: int, technician_id: int
     ) -> Ticket:
-        # Role gate (Manager/Administrator only) is enforced at the route.
+        # Role gate (Company Administrator only) is enforced at the route.
         ticket = self._ticket_repository.get_by_id(ticket_id)
         if ticket is None:
             raise TicketNotFoundError
@@ -448,7 +448,7 @@ class TicketService:
     def change_status(
         self, current_user: User, ticket_id: int, new_status: TicketStatus
     ) -> Ticket:
-        # Role gate (Technician/Manager/Administrator, not Employee) is
+        # Role gate (Technician/Company Administrator, not Employee) is
         # enforced at the route; the technician-must-be-assigned check below
         # is ownership, not role, so it belongs here.
         ticket = self._ticket_repository.get_by_id(ticket_id)

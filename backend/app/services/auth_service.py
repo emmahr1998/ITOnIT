@@ -90,7 +90,7 @@ class AuthService:
         Public, unauthenticated endpoint - no admin approval or email
         verification step exists in this project. Role is always Employee
         (see _SELF_REGISTER_ROLE_NAME); a client can never self-assign
-        Technician/Manager/Administrator through this path.
+        Technician/Company Administrator through this path.
         """
         if self._user_repository.get_by_username(payload.username) is not None:
             raise UsernameConflictError

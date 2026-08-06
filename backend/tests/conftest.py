@@ -656,7 +656,12 @@ class FakeSession:
 
 @pytest.fixture
 def admin_role() -> Role:
-    return Role(id=1, name="Administrator", description="Full system access")
+    """The Company Administrator role - any number of users may hold it per
+    company, all with identical permissions (see active_admin_user and
+    active_manager_user, two distinct users sharing this same role)."""
+    return Role(
+        id=1, name="Company Administrator", description="Full access within their own company"
+    )
 
 
 @pytest.fixture
@@ -670,8 +675,14 @@ def technician_role() -> Role:
 
 
 @pytest.fixture
-def manager_role() -> Role:
-    return Role(id=4, name="Manager", description="Oversees ticket resolution")
+def system_administrator_role() -> Role:
+    """Platform-level role, not yet backed by any seeded user or reachable
+    route (see the role-consolidation migration's docstring) - included here
+    only so the fake role_repository mirrors the real roles table's final
+    4-role shape."""
+    return Role(
+        id=4, name="System Administrator", description="Platform-level access; not yet in use"
+    )
 
 
 @pytest.fixture
@@ -837,7 +848,14 @@ def active_technician_user(technician_role: Role) -> User:
 
 
 @pytest.fixture
-def active_manager_user(manager_role: Role) -> User:
+def active_manager_user(admin_role: Role) -> User:
+    """A second Company Administrator, distinct from active_admin_user -
+    Company Administrator is not a singular role (any number may exist per
+    company, all with identical permissions), so this fixture is kept
+    (rather than deleted along with the retired Manager role) specifically
+    to exercise that. The fixture/variable name is a historical holdover
+    from before the Manager+Administrator merge - only its role changed.
+    """
     now = datetime.now(timezone.utc)
     user = User(
         id=5,
@@ -847,12 +865,12 @@ def active_manager_user(manager_role: Role) -> User:
         last_name="Manager",
         email="manager@itonit.test",
         password_hash=hash_password(MANAGER_PASSWORD),
-        role_id=manager_role.id,
+        role_id=admin_role.id,
         is_active=True,
         created_at=now,
         updated_at=now,
     )
-    user.role = manager_role
+    user.role = admin_role
     user.department = None
     return user
 
@@ -1262,9 +1280,14 @@ def user_repository(
 
 @pytest.fixture
 def role_repository(
-    admin_role: Role, employee_role: Role, technician_role: Role, manager_role: Role
+    admin_role: Role,
+    employee_role: Role,
+    technician_role: Role,
+    system_administrator_role: Role,
 ) -> FakeRoleRepository:
-    return FakeRoleRepository([admin_role, employee_role, technician_role, manager_role])
+    return FakeRoleRepository(
+        [admin_role, employee_role, technician_role, system_administrator_role]
+    )
 
 
 @pytest.fixture

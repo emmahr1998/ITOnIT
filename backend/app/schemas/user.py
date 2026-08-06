@@ -42,10 +42,10 @@ class UserUpdate(BaseModel):
     """PATCH /users/{id} request body - partial update, never a password.
 
     Administrative fields (username, email, role_id, is_active,
-    department_id) may only be changed by an Administrator. A user editing
-    their own profile may only change the "safe" fields: first_name,
-    last_name, phone_number, theme. UserService enforces this split - it
-    is never duplicated in the route.
+    department_id) may only be changed by a Company Administrator. A user
+    editing their own profile may only change the "safe" fields:
+    first_name, last_name, phone_number, theme. UserService enforces this
+    split - it is never duplicated in the route.
     """
 
     username: str | None = Field(default=None, min_length=1, max_length=50)

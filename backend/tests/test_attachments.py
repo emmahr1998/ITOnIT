@@ -280,8 +280,9 @@ def test_delete_attachment_allowed_for_any_ticket_viewer_not_just_uploader(
     employee_attachment: Attachment,
 ) -> None:
     """Unlike comments, attachment deletion has no per-item ownership rule -
-    the business rules only gate on ticket-view access. A Manager (who never
-    uploaded this file) can delete it purely by virtue of ticket access."""
+    the business rules only gate on ticket-view access. A Company
+    Administrator (who never uploaded this file) can delete it purely by
+    virtue of ticket access."""
     response = client.delete(
         f"/tickets/{employee_ticket.id}/attachments/{employee_attachment.id}",
         headers=auth_headers(active_manager_user),
