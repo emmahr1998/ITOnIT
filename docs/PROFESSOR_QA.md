@@ -85,8 +85,10 @@ Q17).
 ### 12. What would you change before production?
 See the "Security review" section of `docs/BACKEND_ARCHITECTURE.md` §22 — in short: add
 HTTPS termination, token revocation, rate limiting on login, malware scanning for uploads,
-move attachments to cloud/object storage, add structured logging/monitoring, add
-`CORSMiddleware` (currently completely absent from `app/main.py`), and move secrets into a
+move attachments to cloud/object storage, add structured logging/monitoring, tighten
+`CORSMiddleware`'s allowed origins to the real deployed frontend URL only (it already exists
+in `app/main.py` with a configurable whitelist via the `CORS_ORIGINS` env var — this is about
+narrowing it further for production, not adding it from scratch), and move secrets into a
 managed secret store instead of a local `.env` file.
 
 ### 13. Why does `username` also accept an email address at login?
@@ -214,9 +216,9 @@ Extension allow-listing and a size cap, both in `AttachmentService.upload_attach
 scanning** — a `.png` file that is actually something else in disguise would pass validation
 based on its extension alone. This is explicitly listed as a pre-production gap.
 
-### 30. How would a React frontend actually talk to this backend today, as-is?
-It can call every endpoint exactly as documented in `docs/BACKEND_API_GUIDE.md` — but one
-concrete blocker exists right now: `app/main.py` registers no `CORSMiddleware`, so a browser
-running React on a different origin (e.g. `localhost:3000`) would have its requests blocked
-by the browser's same-origin policy until CORS is configured. See
-`docs/BACKEND_ARCHITECTURE.md` §23 for the full integration walkthrough.
+### 30. How does a React frontend actually talk to this backend?
+Exactly as documented in `docs/BACKEND_API_GUIDE.md` — see the `frontend/` directory in this
+same repository for the real implementation. `app/main.py` registers `CORSMiddleware` with an
+allowed-origins whitelist read from the `CORS_ORIGINS` env var (defaulting to the Vite dev
+server's `localhost:5173`), so the browser's same-origin policy doesn't block the frontend's
+requests. See `docs/BACKEND_ARCHITECTURE.md` §23 for the full integration walkthrough.
