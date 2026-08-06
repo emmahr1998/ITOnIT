@@ -1,0 +1,25 @@
+# Environments
+.venv/
+venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploaded attachments - metadata lives in the database, files do not get committed
+storage/attachments/*
+!storage/attachments/.gitkeep

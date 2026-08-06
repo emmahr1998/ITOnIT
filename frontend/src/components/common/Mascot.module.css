@@ -1,0 +1,12 @@
+.mascot {
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.rounded {
+  /* Percentage radius scales with the element's own size, so it keeps
+     matching the icon's built-in rounded-square shape (and clipping the
+     couple of near-white corner pixels outside it) at any display size. */
+  border-radius: 22%;
+}

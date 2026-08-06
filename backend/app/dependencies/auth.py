@@ -1,0 +1,84 @@
+from collections.abc import Callable
+
+import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
+
+from app.core.security import decode_access_token
+from app.dependencies.database import get_db
+from app.models.user import User
+from app.repositories.user import UserRepository
+from app.services.auth_service import AuthService
+
+# auto_error=False so a missing token reaches our own 401 handling below,
+# instead of FastAPI's default (403) for a missing Authorization header.
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _credentials_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def get_user_repository(db: Session = Depends(get_db)) -> UserRepository:
+    return UserRepository(db)
+
+
+def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
+    return AuthService(db)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    user_repository: UserRepository = Depends(get_user_repository),
+) -> User:
+    """Resolve the authenticated user from a Bearer token, or fail with 401."""
+    if credentials is None:
+        raise _credentials_error()
+
+    try:
+        payload = decode_access_token(credentials.credentials)
+        user_id = int(payload.sub)
+    except (jwt.PyJWTError, ValueError) as exc:
+        raise _credentials_error() from exc
+
+    user = user_repository.get_by_id(user_id)
+    if user is None:
+        raise _credentials_error()
+
+    return user
+
+
+def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+    """Same as get_current_user, but also rejects deactivated accounts."""
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Inactive user",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return current_user
+
+
+def require_roles(*allowed_role_names: str) -> Callable[..., User]:
+    """Build a dependency that only allows users whose role is in allowed_role_names.
+
+    Usage: Depends(require_roles("Administrator", "Manager"))
+    Role names must match app.models.role.Role.name exactly, e.g. one of the
+    roles seeded by app.scripts.seed_initial_data: Employee, Technician,
+    Manager, Administrator.
+    """
+
+    def dependency(current_user: User = Depends(get_current_active_user)) -> User:
+        if current_user.role.name not in allowed_role_names:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to perform this action",
+            )
+        return current_user
+
+    return dependency
