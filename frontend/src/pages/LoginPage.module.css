@@ -1,0 +1,160 @@
+.page {
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+}
+
+.brandPanel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-10);
+  background: linear-gradient(155deg, #b02f08 0%, #e13c0a 50%, #f2621f 100%);
+  color: #ffffff;
+}
+
+.brandContent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-5);
+  max-width: 24rem;
+}
+
+.mascot {
+  box-shadow: var(--shadow-lg);
+}
+
+.brandMark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.01em;
+}
+
+.brandHeadline {
+  font-size: 2rem;
+  font-weight: var(--font-weight-bold);
+  line-height: 1.25;
+}
+
+.featureList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.featureList li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.featureList li svg {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.formPanel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: var(--color-bg);
+}
+
+.card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.cardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+}
+
+.subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.submitButton {
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  font-size: var(--font-size-base);
+}
+
+.switchRow {
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.switchRow a {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: none;
+}
+
+.switchRow a:hover {
+  text-decoration: underline;
+}
+
+.nameRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+@media (max-width: 900px) {
+  .page {
+    grid-template-columns: 1fr;
+  }
+
+  .brandPanel {
+    padding: var(--space-8) var(--space-6);
+  }
+
+  .brandHeadline {
+    font-size: 1.375rem;
+  }
+
+  .featureList {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .brandPanel {
+    padding: var(--space-6) var(--space-4);
+  }
+
+  .card {
+    padding: var(--space-6) var(--space-5);
+  }
+
+  .nameRow {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,80 @@
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.compact {
+  padding: var(--space-4) var(--space-5);
+  box-shadow: none;
+  background: var(--color-bg);
+}
+
+.clickable {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.clickable:hover {
+  border-color: var(--color-primary);
+}
+
+.clickable:active {
+  transform: translateY(0);
+}
+
+.iconWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.iconWrapCompact {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+.blue {
+  background: var(--color-badge-blue-bg);
+  color: var(--color-badge-blue-text);
+}
+
+.amber {
+  background: var(--color-badge-amber-bg);
+  color: var(--color-badge-amber-text);
+}
+
+.green {
+  background: var(--color-badge-green-bg);
+  color: var(--color-badge-green-text);
+}
+
+.red {
+  background: var(--color-badge-red-bg);
+  color: var(--color-badge-red-text);
+}
+
+.value {
+  font-size: 1.75rem;
+  font-weight: var(--font-weight-bold);
+  line-height: 1.2;
+}
+
+.valueCompact {
+  font-size: var(--font-size-lg);
+}
+
+.label {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}

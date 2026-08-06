@@ -1,0 +1,71 @@
+.sidebar {
+  min-width: 0;
+}
+
+.panel {
+  position: sticky;
+  top: var(--space-6);
+  gap: var(--space-4);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-semibold);
+}
+
+.value {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.control {
+  width: 100%;
+}
+
+.divider {
+  height: 1px;
+  background: var(--color-border);
+}
+
+.dates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dateRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.dateRow svg {
+  flex-shrink: 0;
+}
+
+.dateValue {
+  margin-left: auto;
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+@media (max-width: 900px) {
+  .panel {
+    position: static;
+  }
+}
