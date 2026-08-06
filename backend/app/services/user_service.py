@@ -55,18 +55,27 @@ class UserService:
 
     Also owns the transaction boundary for writes - repositories only
     flush (see BaseRepository), so commit()/rollback() happen here.
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input -
+    every user this service reads, writes, or checks uniqueness against is
+    confined to it. role_repository is deliberately NOT scoped: roles
+    (Employee/Technician/Manager/Administrator) are shared platform
+    vocabulary, not company-owned data.
     """
 
     def __init__(
         self,
         db: Session,
+        company_id: int,
         user_repository: UserRepository | None = None,
         role_repository: RoleRepository | None = None,
         department_repository: DepartmentRepository | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._user_repository = (
-            user_repository if user_repository is not None else UserRepository(db)
+            user_repository if user_repository is not None else UserRepository(db, company_id)
         )
         self._role_repository = (
             role_repository if role_repository is not None else RoleRepository(db)
@@ -74,7 +83,7 @@ class UserService:
         self._department_repository = (
             department_repository
             if department_repository is not None
-            else DepartmentRepository(db)
+            else DepartmentRepository(db, company_id)
         )
 
     def list_users(
@@ -139,6 +148,7 @@ class UserService:
         )
 
         user = User(
+            company_id=self._company_id,
             username=payload.username,
             first_name=payload.first_name,
             last_name=payload.last_name,

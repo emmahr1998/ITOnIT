@@ -294,7 +294,7 @@ def test_create_category_translates_integrity_error_to_conflict() -> None:
         def create(self, obj: Category) -> Category:
             raise IntegrityError("insert", {}, Exception("unique constraint"))
 
-    service = CategoryService(db=FakeSession(), category_repository=RaisingRepository())
+    service = CategoryService(db=FakeSession(), company_id=1, category_repository=RaisingRepository())
 
     with pytest.raises(CategoryNameConflictError):
         service.create_category(CategoryCreate(name="Hardware"))
@@ -312,7 +312,7 @@ def test_delete_category_translates_integrity_error_to_in_use() -> None:
             raise IntegrityError("delete", {}, Exception("FK constraint"))
 
     repository = RaisingRepository([category])
-    service = CategoryService(db=FakeSession(), category_repository=repository)
+    service = CategoryService(db=FakeSession(), company_id=1, category_repository=repository)
 
     with pytest.raises(CategoryInUseError):
         service.delete_category(category.id)

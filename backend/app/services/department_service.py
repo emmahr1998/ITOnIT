@@ -21,14 +21,23 @@ class DepartmentService:
     flush (see BaseRepository), so commit()/rollback() happen here. Same
     shape as CategoryService; there is no delete-guard here because there
     is no DELETE endpoint for departments.
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input.
     """
 
     def __init__(
-        self, db: Session, department_repository: DepartmentRepository | None = None
+        self,
+        db: Session,
+        company_id: int,
+        department_repository: DepartmentRepository | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._department_repository = (
-            department_repository if department_repository is not None else DepartmentRepository(db)
+            department_repository
+            if department_repository is not None
+            else DepartmentRepository(db, company_id)
         )
 
     def list_departments(self) -> list[Department]:
@@ -44,7 +53,7 @@ class DepartmentService:
         if self._department_repository.get_by_title(payload.title) is not None:
             raise DepartmentTitleConflictError
 
-        department = Department(title=payload.title)
+        department = Department(company_id=self._company_id, title=payload.title)
         try:
             self._department_repository.create(department)
             self._db.commit()

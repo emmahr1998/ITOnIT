@@ -46,3 +46,48 @@ class BaseRepository(Generic[ModelType]):
 
     def refresh(self, obj: ModelType) -> None:
         self.db.refresh(obj)
+
+
+class CompanyScopedRepository(BaseRepository[ModelType], Generic[ModelType]):
+    """A BaseRepository whose reads are always confined to one company.
+
+    Every tenant-owned repository (Ticket, Department, Category, Location,
+    Priority, Comment, Attachment, History) extends this instead of
+    BaseRepository directly, and is always constructed with the requesting
+    user's own company_id (see app.dependencies.auth.get_current_company_id)
+    - never a client-supplied value. get_by_id/get_all are overridden here
+    so the isolation guarantee holds even for a caller that forgets it
+    exists; every custom query method a subclass adds (get_by_title,
+    get_with_filters, list_for_ticket, ...) must add its own
+    `self.model.company_id == self.company_id` predicate too, since this
+    base class has no way to see into those bespoke select() statements.
+
+    Returning None/an empty result for a row that exists in another company
+    - rather than raising a distinct "wrong company" error - is deliberate:
+    the caller's existing "not found" handling (a 404, or a domain
+    NotFoundError mapped to one) already does the right thing, and a
+    cross-company id is genuinely indistinguishable from one that was never
+    a real row at all - the same generic response.
+
+    UserRepository is the one exception: it is NOT built on this class,
+    because auth needs to resolve "who is this JWT for" before any company
+    is known at all - see UserRepository's own docstring.
+    """
+
+    def __init__(self, db: Session, model: type[ModelType], company_id: int) -> None:
+        super().__init__(db, model)
+        self.company_id = company_id
+
+    def get_by_id(self, id_: int) -> ModelType | None:
+        return self.db.scalar(
+            select(self.model).where(
+                self.model.id == id_, self.model.company_id == self.company_id
+            )
+        )
+
+    def get_all(self) -> list[ModelType]:
+        return list(
+            self.db.scalars(
+                select(self.model).where(self.model.company_id == self.company_id)
+            ).all()
+        )

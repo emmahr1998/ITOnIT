@@ -17,11 +17,23 @@ class HistoryService:
     operation. This only flushes (via HistoryRepository/BaseRepository),
     matching the project convention that repositories persist and the
     orchestrating service owns the transaction boundary.
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input -
+    it is denormalized from the parent ticket, same as on the model itself.
     """
 
-    def __init__(self, db: Session, history_repository: HistoryRepository | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        company_id: int,
+        history_repository: HistoryRepository | None = None,
+    ) -> None:
+        self._company_id = company_id
         self._history_repository = (
-            history_repository if history_repository is not None else HistoryRepository(db)
+            history_repository
+            if history_repository is not None
+            else HistoryRepository(db, company_id)
         )
 
     def record(
@@ -33,6 +45,7 @@ class HistoryService:
         new_value: str | None,
     ) -> TicketHistory:
         entry = TicketHistory(
+            company_id=self._company_id,
             ticket_id=ticket_id,
             changed_by_user_id=changed_by.id,
             field_name=field_name,

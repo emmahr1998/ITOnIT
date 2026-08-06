@@ -64,6 +64,29 @@ def get_current_active_user(current_user: User = Depends(get_current_user)) -> U
     return current_user
 
 
+def get_current_company_id(current_user: User = Depends(get_current_active_user)) -> int:
+    """The one place every tenant-scoped repository/service gets its
+    company_id from - always derived from the authenticated user's own row,
+    never from a client-supplied header/param/body field, anywhere.
+
+    Every user reachable through this dependency has a company today
+    (company_id is nullable on User only to make room for a future,
+    platform-level System Administrator account, which does not exist yet
+    and has no route that could reach this dependency). Raising here rather
+    than silently returning None if that ever changed without a
+    corresponding route change is deliberate: a `WHERE company_id = NULL`
+    query would just as safely return nothing, but failing loudly is a
+    clearer signal that a route needs the not-yet-built System
+    Administrator exception, not that data quietly vanished.
+    """
+    if current_user.company_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has no associated company",
+        )
+    return current_user.company_id
+
+
 def require_roles(*allowed_role_names: str) -> Callable[..., User]:
     """Build a dependency that only allows users whose role is in allowed_role_names.
 

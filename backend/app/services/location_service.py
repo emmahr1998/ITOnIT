@@ -22,14 +22,23 @@ class LocationService:
     shape as DepartmentService/PriorityService; there is no delete method
     because locations are deactivated (is_active=False) instead of
     deleted, so a ticket already referencing one keeps a valid reference.
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input.
     """
 
     def __init__(
-        self, db: Session, location_repository: LocationRepository | None = None
+        self,
+        db: Session,
+        company_id: int,
+        location_repository: LocationRepository | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._location_repository = (
-            location_repository if location_repository is not None else LocationRepository(db)
+            location_repository
+            if location_repository is not None
+            else LocationRepository(db, company_id)
         )
 
     def list_locations(self) -> list[Location]:
@@ -45,7 +54,7 @@ class LocationService:
         if self._location_repository.get_by_title(payload.title) is not None:
             raise LocationTitleConflictError
 
-        location = Location(title=payload.title, is_active=True)
+        location = Location(company_id=self._company_id, title=payload.title, is_active=True)
         try:
             self._location_repository.create(location)
             self._db.commit()

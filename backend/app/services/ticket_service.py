@@ -91,11 +91,21 @@ class TicketService:
 
     Also owns the transaction boundary for writes (see CategoryService for
     the same convention - repositories only flush, never commit).
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input.
+    It scopes every repository this service touches - including the
+    internal UserRepository, which is why a technician-assignment or
+    requester-override lookup can never resolve to another company's user
+    (UserRepository normally defaults to unscoped for auth's benefit - see
+    its own docstring - but this service always supplies company_id
+    explicitly, so that default never applies here).
     """
 
     def __init__(
         self,
         db: Session,
+        company_id: int,
         ticket_repository: TicketRepository | None = None,
         category_repository: CategoryRepository | None = None,
         priority_repository: PriorityRepository | None = None,
@@ -105,23 +115,30 @@ class TicketService:
         storage_service: StorageService | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._ticket_repository = (
-            ticket_repository if ticket_repository is not None else TicketRepository(db)
+            ticket_repository if ticket_repository is not None else TicketRepository(db, company_id)
         )
         self._category_repository = (
-            category_repository if category_repository is not None else CategoryRepository(db)
+            category_repository
+            if category_repository is not None
+            else CategoryRepository(db, company_id)
         )
         self._priority_repository = (
-            priority_repository if priority_repository is not None else PriorityRepository(db)
+            priority_repository
+            if priority_repository is not None
+            else PriorityRepository(db, company_id)
         )
         self._location_repository = (
-            location_repository if location_repository is not None else LocationRepository(db)
+            location_repository
+            if location_repository is not None
+            else LocationRepository(db, company_id)
         )
         self._user_repository = (
-            user_repository if user_repository is not None else UserRepository(db)
+            user_repository if user_repository is not None else UserRepository(db, company_id)
         )
         self._history_service = (
-            history_service if history_service is not None else HistoryService(db)
+            history_service if history_service is not None else HistoryService(db, company_id)
         )
         self._storage_service = (
             storage_service if storage_service is not None else StorageService()
@@ -226,6 +243,7 @@ class TicketService:
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             ticket = Ticket(
+                company_id=self._company_id,
                 ticket_number=self._generate_ticket_number(),
                 title=title,
                 description=description,

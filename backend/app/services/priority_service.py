@@ -20,14 +20,23 @@ class PriorityService:
     Also owns the transaction boundary for writes - repositories only
     flush (see BaseRepository), so commit()/rollback() happen here. Same
     shape as DepartmentService/CategoryService.
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input.
     """
 
     def __init__(
-        self, db: Session, priority_repository: PriorityRepository | None = None
+        self,
+        db: Session,
+        company_id: int,
+        priority_repository: PriorityRepository | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._priority_repository = (
-            priority_repository if priority_repository is not None else PriorityRepository(db)
+            priority_repository
+            if priority_repository is not None
+            else PriorityRepository(db, company_id)
         )
 
     def list_priorities(self) -> list[Priority]:
@@ -43,7 +52,7 @@ class PriorityService:
         if self._priority_repository.get_by_title(payload.title) is not None:
             raise PriorityTitleConflictError
 
-        priority = Priority(title=payload.title)
+        priority = Priority(company_id=self._company_id, title=payload.title)
         try:
             self._priority_repository.create(priority)
             self._db.commit()
