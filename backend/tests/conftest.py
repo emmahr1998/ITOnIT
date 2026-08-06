@@ -997,7 +997,7 @@ def client(
 
     app.dependency_overrides[get_user_repository] = lambda: user_repository
     app.dependency_overrides[get_auth_service] = lambda: AuthService(
-        db=None, user_repository=user_repository
+        db=FakeSession(), user_repository=user_repository, role_repository=role_repository
     )
     app.dependency_overrides[get_category_service] = lambda: CategoryService(
         db=FakeSession(), category_repository=category_repository

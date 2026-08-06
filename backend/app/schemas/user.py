@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.department import DepartmentResponse
+from app.schemas.validators import validate_email_format
 
 
 class UserCreate(BaseModel):
@@ -30,6 +31,11 @@ class UserCreate(BaseModel):
         if not stripped:
             raise ValueError("must not be empty")
         return stripped
+
+    @field_validator("email")
+    @classmethod
+    def _valid_email(cls, value: str) -> str:
+        return validate_email_format(value)
 
 
 class UserUpdate(BaseModel):
@@ -61,6 +67,11 @@ class UserUpdate(BaseModel):
         if not stripped:
             raise ValueError("must not be empty")
         return stripped
+
+    @field_validator("email")
+    @classmethod
+    def _valid_email(cls, value: str | None) -> str | None:
+        return value if value is None else validate_email_format(value)
 
 
 class PasswordChangeRequest(BaseModel):
