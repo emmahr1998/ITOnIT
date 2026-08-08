@@ -54,12 +54,27 @@ def get_current_user(
 
 
 def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
-    """Same as get_current_user, but also rejects deactivated accounts."""
+    """Same as get_current_user, but also rejects deactivated accounts and
+    accounts whose company has been suspended.
+
+    The company check runs fresh on every request (current_user.company is
+    eager-loaded by UserRepository.get_by_id, not lazy-loaded), not just at
+    login - suspending a company immediately revokes access for all of its
+    users, even ones holding a still-valid, unexpired access token. A user
+    with no company (company_id is None - reserved for the future System
+    Administrator, who logs in through a separate /platform/login rather
+    than this dependency chain at all) has nothing to check here.
+    """
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Inactive user",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    if current_user.company_id is not None and not current_user.company.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This company's account has been suspended",
         )
     return current_user
 

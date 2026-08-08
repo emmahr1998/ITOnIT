@@ -44,7 +44,7 @@ export async function changeTicketStatus(
   return data;
 }
 
-/** DELETE /tickets/{id}. Manager/Administrator only - enforced server-side. */
+/** DELETE /tickets/{id}. Company Administrator only - enforced server-side. */
 export async function deleteTicket(ticketId: number): Promise<void> {
   await apiClient.delete(`/tickets/${ticketId}`);
 }

@@ -30,6 +30,14 @@ in scope.
 **Not a tenant-isolation violation** — no cross-company data exposure.
 It's an account-usability gap.
 
+**Worsened by Milestone 4 (2026-08-06):** now that `POST /auth/login`
+requires a `company_code`, a self-registered `company_id = None` account
+can't log in *at all* through the normal flow anymore (previously it could
+log in and only 403'd on company-scoped routes afterward). Still not a
+tenant-isolation issue - just a harder dead end than before. Not fixed now,
+for the same reason as before: the real fix is company-code-first
+registration, which is Milestone 5's job.
+
 **Resolution:** remove or replace `POST /auth/register` with the
 company-code-first registration flow (`POST /companies/register`) during
 **Milestone 5 — Company registration + default data seeding**, which
@@ -117,3 +125,85 @@ console, Electron) actually exists to document. `README.md` is the one
 exception - its "Default accounts" table and role descriptions were kept
 current in Milestone 3 since they're short, concrete, and directly tied to
 `scripts/create_demo_users.py`, not a narrative architecture description.
+
+### 4. ✅ RESOLVED — Frontend role-keyed lookups still used the pre-Milestone-3 role names — crashed the authenticated app shell for every real user
+
+**Found:** during Milestone 4's live-browser verification of the new
+login flow (2026-08-06) - the first time any milestone actually completed
+a full login round-trip in a browser since Milestone 3 changed the role
+names on the backend.
+
+**Resolved:** 2026-08-08, as a dedicated frontend compatibility pass
+before committing Milestone 4 (the crash made the authenticated app
+unusable, so the user asked to close this out immediately rather than
+defer it further). No longer an open item - kept below for the historical
+record of what was wrong, plus what changed to fix it.
+
+**What's wrong:** `frontend/src/types/auth.ts`'s `Role` type is still
+`"Employee" | "Technician" | "Manager" | "Administrator"` - never updated
+for Milestone 3's role consolidation (deferred there on purpose; see the
+approved Milestone 3 plan's "Frontend Impact" section, never implemented).
+`frontend/src/components/layout/Sidebar.tsx` declares
+`NAV_BY_ROLE: Record<Role, NavSection[]>`, keyed by those same four
+strings. A real user's `role` from `GET /auth/me` is now `"Company
+Administrator"` or `"System Administrator"` - neither is a key in
+`NAV_BY_ROLE`, so `NAV_BY_ROLE[user.role]` is `undefined`, and the
+component crashes rendering it (`TypeError: Cannot read properties of
+undefined (reading 'map')`). Verified live: logging in as the demo admin
+(`admin` / `Admin123!` / company code `DEFAULT001`) succeeds completely
+(`POST /auth/login` → 200, `GET /auth/me` → 200, redirect to `/dashboard`
+fires) - the crash happens in the authenticated app shell immediately
+after, not in anything Milestone 4 built. The same class of bug likely
+exists in `TicketListPage.tsx`'s `PAGE_TITLE_BY_ROLE`/`EMPTY_STATE_BY_ROLE`
+and `DashboardPage.tsx`'s `role === "Administrator"` string comparisons
+(the plain-comparison ones fail silently instead of crashing, but are
+equally wrong now).
+
+**Why deferred:** this is exactly the frontend work the Milestone 3 plan
+explicitly scoped out ("Frontend Impact — do not implement yet"), approved
+as deferred at the time. Milestone 4's job was the login flow itself, not
+a general frontend role-string sweep - fixing `Sidebar.tsx` alone wouldn't
+close this out, since the other files listed in Milestone 3's Frontend
+Impact section (`TicketListPage.tsx`, `DashboardPage.tsx`,
+`CreateUserModal.tsx`, `AppRouter.tsx`, `types/user.ts`'s hardcoded
+`ROLE_IDS`) have the identical problem and belong to the same pass.
+
+**Impact:** every real login (any role except a bare Employee whose nav
+happens not to crash - unverified either way) currently lands on a broken,
+crashing authenticated app - not a login-flow defect, but a real blocker
+for actually using the app today.
+
+**Fix applied:** `types/auth.ts`'s `Role` type is now `"Employee" |
+"Technician" | "Company Administrator" | "System Administrator"`. Every
+role-keyed lookup was updated to match: `Sidebar.tsx`'s `NAV_BY_ROLE`
+(Manager and Administrator's nav sections merged into one "Company
+Administrator" entry - the superset, Main + Management - with a new,
+deliberately-empty "System Administrator" entry, since no real UI exists
+for that role yet); `TicketListPage.tsx`'s `HEADING_BY_ROLE`/
+`EMPTY_STATE_BY_ROLE` and its inline create-ticket-button check;
+`DashboardPage.tsx`'s separate `isManager`/`isAdmin` booleans collapsed
+into one `isCompanyAdmin` (Manager and Administrator became the same role,
+so their dashboard sections are now the same code path - the
+previously-Administrator-only KPI card set, quick actions, and widgets);
+`AppRouter.tsx`'s `ADMIN_ROLES`/`CREATE_TICKET_ROLES`; `TicketSidebar.tsx`'s
+`canManage`; `CreateUserModal.tsx`, `UserEditModal.tsx`, and `UsersPage.tsx`'s
+role dropdown/filter. `types/user.ts`'s `ROLE_ID_BY_NAME`/`ROLE_OPTIONS` are
+now typed as `Record<AssignableRole, number>`/`AssignableRole[]` (a new
+`Exclude<Role, "System Administrator">` type) rather than `Record<Role, ...>`,
+since a company-scoped admin UI has no business offering the platform-only
+System Administrator role as something to assign, and that role's id isn't
+even reliably knowable from the frontend (confirmed empirically: it varies
+by install history). TypeScript's exhaustiveness checking on the `Record<Role,
+...>` types was used as the systematic checklist for this pass - fixing the
+`Role` type first and re-running `tsc -b` surfaced every remaining file
+needing an update as a compile error, including two (`UserEditModal.tsx`,
+`UsersPage.tsx`) not found by the earlier manual audit.
+
+**Verified:** `tsc -b`, `oxlint`, and `vite build` all clean. Live browser
+verification: logged in as Employee, Technician, and Company Administrator
+(the demo admin, formerly "Administrator") - each reaches `/dashboard`
+without a console error, the sidebar renders the correct nav for its role,
+and role-gated widgets/actions show correctly. No frontend route or UI
+exists yet for System Administrator to log into (that's Milestone 8), so
+it wasn't exercised end-to-end, but the nav/role-keyed lookups no longer
+crash for it either.

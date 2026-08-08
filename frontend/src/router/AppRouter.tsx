@@ -14,8 +14,8 @@ import { DepartmentsPage } from "../pages/admin/DepartmentsPage";
 import { LocationsPage } from "../pages/admin/LocationsPage";
 import { AboutPage } from "../pages/AboutPage";
 
-const CREATE_TICKET_ROLES = ["Employee", "Manager", "Administrator"] as const;
-const ADMIN_ROLES = ["Administrator"] as const;
+const CREATE_TICKET_ROLES = ["Employee", "Company Administrator"] as const;
+const ADMIN_ROLES = ["Company Administrator"] as const;
 
 export function AppRouter() {
   return (

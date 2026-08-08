@@ -45,18 +45,25 @@ export interface AdminUserCreate {
 }
 
 /**
+ * Roles a Company Administrator can assign to a user they create/edit.
+ * Excludes "System Administrator" - that id isn't just unpredictable (it
+ * depends on install history, see below), it also isn't a role any
+ * company-scoped admin UI should be able to hand out.
+ */
+export type AssignableRole = Exclude<Role, "System Administrator">;
+
+/**
  * There is no GET /roles endpoint, and UserResponse only ever exposes a
  * role's name - never its id - yet PATCH /users/{id} requires role_id.
  * This mapping was confirmed by reading the seeded roles table directly
- * (read-only) rather than guessed: 1=Employee, 2=Technician, 3=Manager,
- * 4=Administrator. Roles are fixed, admin-managed-nowhere seed data, so
- * this is stable, but it is not a documented API contract.
+ * (read-only) rather than guessed: 1=Employee, 2=Technician,
+ * 4=Company Administrator. Roles are fixed, admin-managed-nowhere seed
+ * data, so this is stable, but it is not a documented API contract.
  */
-export const ROLE_ID_BY_NAME: Record<Role, number> = {
+export const ROLE_ID_BY_NAME: Record<AssignableRole, number> = {
   Employee: 1,
   Technician: 2,
-  Manager: 3,
-  Administrator: 4,
+  "Company Administrator": 4,
 };
 
-export const ROLE_OPTIONS: Role[] = ["Employee", "Technician", "Manager", "Administrator"];
+export const ROLE_OPTIONS: AssignableRole[] = ["Employee", "Technician", "Company Administrator"];

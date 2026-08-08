@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 from fastapi.testclient import TestClient
 
+from app.models.company import Company
 from app.models.user import User
 
 
@@ -9,6 +10,7 @@ def test_change_own_password_succeeds(
     client: TestClient,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
+    company_a: Company,
 ) -> None:
     response = client.patch(
         "/users/me/password",
@@ -20,14 +22,22 @@ def test_change_own_password_succeeds(
     # Old password no longer works.
     old_login = client.post(
         "/auth/login",
-        json={"username": active_employee_user.username, "password": "EmployeePass1!"},
+        json={
+            "company_code": company_a.company_code,
+            "username": active_employee_user.username,
+            "password": "EmployeePass1!",
+        },
     )
     assert old_login.status_code == 401
 
     # New password works.
     new_login = client.post(
         "/auth/login",
-        json={"username": active_employee_user.username, "password": "BrandNewPass1!"},
+        json={
+            "company_code": company_a.company_code,
+            "username": active_employee_user.username,
+            "password": "BrandNewPass1!",
+        },
     )
     assert new_login.status_code == 200
 
@@ -36,6 +46,7 @@ def test_change_own_password_rejects_wrong_current_password(
     client: TestClient,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
+    company_a: Company,
 ) -> None:
     response = client.patch(
         "/users/me/password",
@@ -47,7 +58,11 @@ def test_change_own_password_rejects_wrong_current_password(
     # Original password still works.
     login = client.post(
         "/auth/login",
-        json={"username": active_employee_user.username, "password": "EmployeePass1!"},
+        json={
+            "company_code": company_a.company_code,
+            "username": active_employee_user.username,
+            "password": "EmployeePass1!",
+        },
     )
     assert login.status_code == 200
 
@@ -65,6 +80,7 @@ def test_admin_set_password_succeeds_without_current_password(
     active_admin_user: User,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
+    company_a: Company,
 ) -> None:
     response = client.patch(
         f"/users/{active_employee_user.id}/password",
@@ -75,7 +91,11 @@ def test_admin_set_password_succeeds_without_current_password(
 
     new_login = client.post(
         "/auth/login",
-        json={"username": active_employee_user.username, "password": "AdminSetThis1!"},
+        json={
+            "company_code": company_a.company_code,
+            "username": active_employee_user.username,
+            "password": "AdminSetThis1!",
+        },
     )
     assert new_login.status_code == 200
 
