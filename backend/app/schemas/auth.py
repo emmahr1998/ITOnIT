@@ -32,16 +32,55 @@ class RegisterRequest(BaseModel):
         return validate_email_format(value)
 
 
+class CompanyCodeRequest(BaseModel):
+    """POST /auth/resolve-company request body."""
+
+    company_code: str = Field(min_length=1, max_length=20)
+
+    @field_validator("company_code")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be empty")
+        return stripped
+
+
+class CompanyResolveResponse(BaseModel):
+    """POST /auth/resolve-company response body - just enough for a login
+    screen to display which company a code belongs to before asking for
+    credentials. Field names are prefixed (company_name/company_logo)
+    rather than bare name/logo, so the shape is self-describing on a
+    public, unauthenticated endpoint.
+    """
+
+    company_name: str
+    company_logo: str | None = None
+
+
 class LoginRequest(BaseModel):
     """POST /auth/login request body.
 
+    company_code identifies which company to look the user up in -
+    required, since username/email are only unique *within* a company
+    (UNIQUE(company_id, username), UNIQUE(company_id, email)), not
+    platform-wide, so there is no way to resolve a login without it.
     ``username`` is the documented login field, but the service looks it up
     against both the username and email columns in one query, so existing
     email-based logins keep working without a second documented field.
     """
 
+    company_code: str = Field(min_length=1, max_length=20)
     username: str
     password: str
+
+    @field_validator("company_code")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be empty")
+        return stripped
 
 
 class TokenResponse(BaseModel):

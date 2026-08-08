@@ -7,7 +7,7 @@ export interface AuthContextValue {
   user: CurrentUser | null;
   status: AuthStatus;
   error: string | null;
-  login: (username: string, password: string) => Promise<void>;
+  login: (companyCode: string, username: string, password: string) => Promise<void>;
   register: (payload: RegisterRequest) => Promise<void>;
   logout: () => void;
 }

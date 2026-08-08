@@ -62,10 +62,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
+  const login = useCallback(async (companyCode: string, username: string, password: string) => {
     setError(null);
     try {
-      const tokens = await loginRequest({ username, password });
+      const tokens = await loginRequest({ company_code: companyCode, username, password });
       tokenStore.setTokens({ access: tokens.access, refresh: tokens.refresh });
       const currentUser = await fetchCurrentUser();
       setUser(currentUser);

@@ -181,8 +181,7 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   const role = user?.role;
-  const isAdmin = role === "Administrator";
-  const isManager = role === "Manager";
+  const isCompanyAdmin = role === "Company Administrator";
   const isTechnician = role === "Technician";
   const isEmployee = role === "Employee";
 
@@ -223,7 +222,7 @@ export function DashboardPage() {
   }, [user]);
 
   useEffect(() => {
-    if (!isAdmin) {
+    if (!isCompanyAdmin) {
       return;
     }
     fetchUsers({ limit: 500 })
@@ -231,7 +230,7 @@ export function DashboardPage() {
       .catch(() => {
         // Optional widget - the rest of the dashboard still works without it.
       });
-  }, [isAdmin]);
+  }, [isCompanyAdmin]);
 
   const statusBreakdown = useMemo(() => {
     if (!tickets) return [];
@@ -288,7 +287,7 @@ export function DashboardPage() {
           </h1>
           <p className={styles.subheading}>Here&rsquo;s what&rsquo;s happening in your IT environment today.</p>
         </div>
-        {(isEmployee || isManager || isAdmin) && (
+        {(isEmployee || isCompanyAdmin) && (
           <Link to="/tickets/new" className="btn btn-primary">
             + Create Ticket
           </Link>
@@ -318,15 +317,7 @@ export function DashboardPage() {
                 <StatCard label="Resolved Today" value={stats.resolvedToday} accent="green" icon={CheckCircle2} to="/tickets?view=resolved-today" />
               </>
             )}
-            {isManager && (
-              <>
-                <StatCard label="Open Tickets" value={stats.openCount} accent="blue" icon={ListTodo} to="/tickets?view=open" />
-                <StatCard label="Pending Assignments" value={stats.pendingAssignments} accent="amber" icon={UserCog} to="/tickets?view=unassigned" />
-                <StatCard label="High Priority Tickets" value={stats.highPriorityOpen} accent="red" icon={AlertTriangle} to="/tickets?view=high-priority" />
-                <StatCard label="Resolved Today" value={stats.resolvedToday} accent="green" icon={CheckCircle2} to="/tickets?view=resolved-today" />
-              </>
-            )}
-            {isAdmin && (
+            {isCompanyAdmin && (
               <>
                 <StatCard label="Open Tickets" value={stats.openCount} accent="blue" icon={ListTodo} to="/tickets?view=open" />
                 <StatCard label="Pending Assignments" value={stats.pendingAssignments} accent="amber" icon={UserCog} to="/tickets?view=unassigned" />
@@ -336,8 +327,8 @@ export function DashboardPage() {
             )}
           </div>
 
-          {/* -------- Secondary KPI row (Administrator only) -------- */}
-          {isAdmin && (
+          {/* -------- Secondary KPI row (Company Administrator only) -------- */}
+          {isCompanyAdmin && (
             <div className={styles.secondaryGrid}>
               <StatCard label="Active Technicians" value={activeTechnicians ?? "—"} accent="blue" icon={UsersIcon} size="sm" />
               <StatCard
@@ -356,10 +347,10 @@ export function DashboardPage() {
             {!isTechnician && <BreakdownList title="Tickets by Category" items={categoryBreakdown} />}
           </div>
 
-          {isAdmin && <MonthlyTrend points={monthlyTrend} />}
+          {isCompanyAdmin && <MonthlyTrend points={monthlyTrend} />}
 
-          {/* -------- Recent Activity + Quick Actions (Manager/Admin) -------- */}
-          {(isManager || isAdmin) && (
+          {/* -------- Recent Activity + Quick Actions (Company Administrator) -------- */}
+          {isCompanyAdmin && (
             <div className={styles.splitGrid}>
               <div className={styles.recentCard}>
                 <div className={styles.recentHeader}>
@@ -402,7 +393,7 @@ export function DashboardPage() {
                     </span>
                     Create Ticket
                   </Link>
-                  {isAdmin && (
+                  {isCompanyAdmin && (
                     <>
                       <Link to="/admin/users?create=1" className={styles.quickAction}>
                         <span className={styles.quickActionIcon}>
@@ -430,7 +421,7 @@ export function DashboardPage() {
                       </Link>
                     </>
                   )}
-                  {!isAdmin && (
+                  {!isCompanyAdmin && (
                     <Link to="/tickets" className={styles.quickAction}>
                       <span className={styles.quickActionIcon}>
                         <TicketIcon size={16} />
@@ -485,7 +476,7 @@ export function DashboardPage() {
             </div>
           )}
 
-          {isAdmin && <SystemHealthCard />}
+          {isCompanyAdmin && <SystemHealthCard />}
         </>
       )}
     </div>

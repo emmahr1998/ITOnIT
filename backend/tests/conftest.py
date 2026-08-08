@@ -22,6 +22,7 @@ from app.main import app
 from app.models.attachment import Attachment
 from app.models.category import Category
 from app.models.comment import Comment
+from app.models.company import Company
 from app.models.department import Department
 from app.models.enums import TicketStatus
 from app.models.location import Location
@@ -59,6 +60,12 @@ COMPANY_B_ADMIN_PASSWORD = "CompanyBAdminPass1!"
 COMPANY_B_TECHNICIAN_PASSWORD = "CompanyBTechPass1!"
 COMPANY_B_EMPLOYEE_PASSWORD = "CompanyBEmployeePass1!"
 
+# Company codes for the company-code-first login flow (Milestone 4).
+COMPANY_A_CODE = "COMPANYA1"
+COMPANY_B_CODE = "COMPANYB1"
+SUSPENDED_COMPANY_ID = 3
+SUSPENDED_COMPANY_CODE = "SUSPENDED1"
+
 
 class FakeUserRepository:
     """In-memory stand-in for UserRepository.
@@ -76,16 +83,19 @@ class FakeUserRepository:
         self._by_id = {user.id: user for user in users}
         self._id_seq = [max(self._by_id, default=0) + 1]
         # None = unscoped, matching real UserRepository's default - used
-        # for auth (get_current_user / AuthService.authenticate), which
-        # must resolve a user before any company is known. The base
-        # instance built by the user_repository fixture stays unscoped
-        # forever; per-request company scoping for user-management calls
-        # is done via a *separate* .scoped() view (see below), never by
-        # mutating this instance's company_id in place - auth and
-        # user-management share the same underlying dict/id-sequence but
-        # must never share a mutable company_id, since a single request's
-        # dependency chain resolves get_current_user (needs unscoped)
-        # before UserService's own company_id is even known.
+        # for get_current_user, which must resolve a user before any
+        # company is known. The base instance built by the user_repository
+        # fixture stays unscoped forever; per-request company scoping for
+        # user-management calls is done via a *separate* .scoped() view
+        # (see below), never by mutating this instance's company_id in
+        # place - auth and user-management share the same underlying
+        # dict/id-sequence but must never share a mutable company_id, since
+        # a single request's dependency chain resolves get_current_user
+        # (needs unscoped) before UserService's own company_id is even
+        # known. AuthService.login is a third case, fitting neither: it
+        # resolves its company fresh per call (from company_code) and
+        # passes it explicitly to get_by_username_or_email below, never
+        # touching self.company_id at all.
         self.company_id = company_id
 
     def scoped(self, company_id: int) -> "FakeUserRepository":
@@ -135,8 +145,21 @@ class FakeUserRepository:
             None,
         )
 
-    def get_by_username_or_email(self, identifier: str) -> User | None:
-        return self.get_by_username(identifier) or self.get_by_email(identifier)
+    def get_by_username_or_email(self, identifier: str, company_id: int) -> User | None:
+        """Scoped by an explicit parameter, mirroring UserRepository's
+        equivalent method - ignores self.company_id entirely, since
+        AuthService.login resolves its company fresh on every call rather
+        than at repository-construction time (see __init__'s docstring)."""
+        target = identifier.strip().lower()
+        return next(
+            (
+                u
+                for u in self._by_id.values()
+                if u.company_id == company_id
+                and (u.username.lower() == target or u.email.lower() == target)
+            ),
+            None,
+        )
 
     def _filtered(
         self,
@@ -220,6 +243,22 @@ class FakeRoleRepository:
 
     def get_by_name(self, name: str) -> Role | None:
         return next((r for r in self._by_id.values() if r.name == name), None)
+
+
+class FakeCompanyRepository:
+    """In-memory stand-in for CompanyRepository. Same rationale as FakeUserRepository."""
+
+    def __init__(self, companies: list[Company]) -> None:
+        self._by_id = {company.id: company for company in companies}
+
+    def get_by_id(self, id_: int) -> Company | None:
+        return self._by_id.get(id_)
+
+    def get_by_code(self, company_code: str) -> Company | None:
+        target = company_code.strip().lower()
+        return next(
+            (c for c in self._by_id.values() if c.company_code.lower() == target), None
+        )
 
 
 class FakeCategoryRepository:
@@ -686,6 +725,49 @@ def system_administrator_role() -> Role:
 
 
 @pytest.fixture
+def company_a() -> Company:
+    now = datetime.now(timezone.utc)
+    return Company(
+        id=COMPANY_A_ID,
+        name="Company A",
+        company_code=COMPANY_A_CODE,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.fixture
+def company_b() -> Company:
+    now = datetime.now(timezone.utc)
+    return Company(
+        id=COMPANY_B_ID,
+        name="Company B",
+        company_code=COMPANY_B_CODE,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.fixture
+def suspended_company() -> Company:
+    """A real, existing company whose account has been suspended - used to
+    prove login and every authenticated request reject it distinctly, not
+    just at the moment of suspension but for every request afterward, even
+    ones carrying an already-issued, still-unexpired access token."""
+    now = datetime.now(timezone.utc)
+    return Company(
+        id=SUSPENDED_COMPANY_ID,
+        name="Suspended Company",
+        company_code=SUSPENDED_COMPANY_CODE,
+        is_active=False,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.fixture
 def it_department() -> Department:
     now = datetime.now(timezone.utc)
     return Department(id=1, company_id=COMPANY_A_ID, title="IT", created_at=now, updated_at=now)
@@ -762,7 +844,7 @@ def inactive_location() -> Location:
 
 
 @pytest.fixture
-def active_admin_user(admin_role: Role, it_department: Department) -> User:
+def active_admin_user(admin_role: Role, it_department: Department, company_a: Company) -> User:
     now = datetime.now(timezone.utc)
     user = User(
         id=1,
@@ -780,11 +862,12 @@ def active_admin_user(admin_role: Role, it_department: Department) -> User:
     )
     user.role = admin_role
     user.department = it_department
+    user.company = company_a
     return user
 
 
 @pytest.fixture
-def inactive_user(employee_role: Role) -> User:
+def inactive_user(employee_role: Role, company_a: Company) -> User:
     now = datetime.now(timezone.utc)
     user = User(
         id=2,
@@ -801,11 +884,14 @@ def inactive_user(employee_role: Role) -> User:
     )
     user.role = employee_role
     user.department = None
+    user.company = company_a
     return user
 
 
 @pytest.fixture
-def active_employee_user(employee_role: Role, it_department: Department) -> User:
+def active_employee_user(
+    employee_role: Role, it_department: Department, company_a: Company
+) -> User:
     now = datetime.now(timezone.utc)
     user = User(
         id=3,
@@ -823,11 +909,12 @@ def active_employee_user(employee_role: Role, it_department: Department) -> User
     )
     user.role = employee_role
     user.department = it_department
+    user.company = company_a
     return user
 
 
 @pytest.fixture
-def active_technician_user(technician_role: Role) -> User:
+def active_technician_user(technician_role: Role, company_a: Company) -> User:
     now = datetime.now(timezone.utc)
     user = User(
         id=4,
@@ -844,11 +931,12 @@ def active_technician_user(technician_role: Role) -> User:
     )
     user.role = technician_role
     user.department = None
+    user.company = company_a
     return user
 
 
 @pytest.fixture
-def active_manager_user(admin_role: Role) -> User:
+def active_manager_user(admin_role: Role, company_a: Company) -> User:
     """A second Company Administrator, distinct from active_admin_user -
     Company Administrator is not a singular role (any number may exist per
     company, all with identical permissions), so this fixture is kept
@@ -872,11 +960,14 @@ def active_manager_user(admin_role: Role) -> User:
     )
     user.role = admin_role
     user.department = None
+    user.company = company_a
     return user
 
 
 @pytest.fixture
-def active_employee_user_2(employee_role: Role, hr_department: Department) -> User:
+def active_employee_user_2(
+    employee_role: Role, hr_department: Department, company_a: Company
+) -> User:
     """A second employee, distinct from active_employee_user - needed to
     prove employees cannot see/edit each other's tickets."""
     now = datetime.now(timezone.utc)
@@ -896,11 +987,12 @@ def active_employee_user_2(employee_role: Role, hr_department: Department) -> Us
     )
     user.role = employee_role
     user.department = hr_department
+    user.company = company_a
     return user
 
 
 @pytest.fixture
-def active_technician_user_2(technician_role: Role) -> User:
+def active_technician_user_2(technician_role: Role, company_a: Company) -> User:
     """A second technician, distinct from active_technician_user - needed to
     prove technicians cannot see/edit tickets assigned to someone else."""
     now = datetime.now(timezone.utc)
@@ -919,6 +1011,7 @@ def active_technician_user_2(technician_role: Role) -> User:
     )
     user.role = technician_role
     user.department = None
+    user.company = company_a
     return user
 
 
@@ -1113,7 +1206,9 @@ def company_b_category() -> Category:
 
 
 @pytest.fixture
-def company_b_admin_user(admin_role: Role, company_b_department: Department) -> User:
+def company_b_admin_user(
+    admin_role: Role, company_b_department: Department, company_b: Company
+) -> User:
     now = datetime.now(timezone.utc)
     user = User(
         id=101,
@@ -1131,11 +1226,12 @@ def company_b_admin_user(admin_role: Role, company_b_department: Department) -> 
     )
     user.role = admin_role
     user.department = company_b_department
+    user.company = company_b
     return user
 
 
 @pytest.fixture
-def company_b_technician_user(technician_role: Role) -> User:
+def company_b_technician_user(technician_role: Role, company_b: Company) -> User:
     now = datetime.now(timezone.utc)
     user = User(
         id=102,
@@ -1152,11 +1248,14 @@ def company_b_technician_user(technician_role: Role) -> User:
     )
     user.role = technician_role
     user.department = None
+    user.company = company_b
     return user
 
 
 @pytest.fixture
-def company_b_employee_user(employee_role: Role, company_b_department: Department) -> User:
+def company_b_employee_user(
+    employee_role: Role, company_b_department: Department, company_b: Company
+) -> User:
     now = datetime.now(timezone.utc)
     user = User(
         id=103,
@@ -1174,6 +1273,7 @@ def company_b_employee_user(employee_role: Role, company_b_department: Departmen
     )
     user.role = employee_role
     user.department = company_b_department
+    user.company = company_b
     return user
 
 
@@ -1291,6 +1391,13 @@ def role_repository(
 
 
 @pytest.fixture
+def company_repository(
+    company_a: Company, company_b: Company, suspended_company: Company
+) -> FakeCompanyRepository:
+    return FakeCompanyRepository([company_a, company_b, suspended_company])
+
+
+@pytest.fixture
 def department_repository(
     it_department: Department, hr_department: Department, company_b_department: Department
 ) -> FakeDepartmentRepository:
@@ -1381,6 +1488,7 @@ def auth_headers() -> Callable[[User], dict[str, str]]:
 def client(
     user_repository: FakeUserRepository,
     role_repository: FakeRoleRepository,
+    company_repository: FakeCompanyRepository,
     department_repository: FakeDepartmentRepository,
     priority_repository: FakePriorityRepository,
     location_repository: FakeLocationRepository,
@@ -1497,7 +1605,10 @@ def client(
     # work before any company is known.
     app.dependency_overrides[get_user_repository] = lambda: user_repository
     app.dependency_overrides[get_auth_service] = lambda: AuthService(
-        db=FakeSession(), user_repository=user_repository, role_repository=role_repository
+        db=FakeSession(),
+        user_repository=user_repository,
+        role_repository=role_repository,
+        company_repository=company_repository,
     )
     app.dependency_overrides[get_category_service] = _category_service
     app.dependency_overrides[get_department_service] = _department_service

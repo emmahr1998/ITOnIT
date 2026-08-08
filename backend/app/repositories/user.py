@@ -4,21 +4,31 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.user import User
 from app.repositories.base import BaseRepository
 
-_EAGER_OPTIONS = (selectinload(User.role), selectinload(User.department))
+_EAGER_OPTIONS = (
+    selectinload(User.role),
+    selectinload(User.department),
+    selectinload(User.company),
+)
 
 
 class UserRepository(BaseRepository[User]):
     """User lookups needed for authentication and user management.
 
-    Deliberately NOT built on CompanyScopedRepository: resolving "who is
-    this JWT for" (get_current_user, via get_by_id) and "who is logging in"
-    (AuthService.authenticate, via get_by_username_or_email) both have to
-    run *before* any company is known - the company is derived from the
-    user this repository is about to find, not the other way around. Those
-    two auth-only call sites construct this repository with company_id=None
-    (unscoped, matching today's global lookup), while every user-management
-    call site (UserService, constructed via get_user_service) always
-    supplies the caller's real company_id, scoping every method below.
+    Deliberately NOT built on CompanyScopedRepository. Two different auth
+    call sites need two different kinds of scoping, neither of which fits
+    "always scoped at construction time":
+      - get_current_user (via get_by_id) must resolve "who is this JWT for"
+        with no company known yet at all - the company is derived *from*
+        the user this call finds, not the other way around. Constructed
+        with company_id=None (unscoped).
+      - AuthService.login (via get_by_username_or_email) resolves the
+        company first, from the request's company_code, then looks up the
+        user *within* that company - but the company differs on every call,
+        so it's passed as an explicit method parameter rather than fixed at
+        construction time.
+    Every user-management call site (UserService, via get_user_service)
+    fits the normal pattern: company known once per request, fixed at
+    construction, scoping every method below via self.company_id/_scope().
     """
 
     def __init__(self, db: Session, company_id: int | None = None) -> None:
@@ -31,9 +41,12 @@ class UserRepository(BaseRepository[User]):
         return stmt
 
     def get_by_id(self, id_: int) -> User | None:
-        """Overrides BaseRepository.get_by_id to eager-load role/department,
-        which every UserResponse needs, and to apply company scoping only
-        when this instance was constructed with one (see class docstring)."""
+        """Overrides BaseRepository.get_by_id to eager-load role/department/
+        company - role/department for UserResponse, company so
+        get_current_active_user can check current_user.company.is_active on
+        every request without a lazy-load - and to apply company scoping
+        only when this instance was constructed with one (see class
+        docstring)."""
         return self.db.scalar(
             self._scope(select(User).where(User.id == id_)).options(*_EAGER_OPTIONS)
         )
@@ -52,26 +65,30 @@ class UserRepository(BaseRepository[User]):
             )
         )
 
-    def get_by_username_or_email(self, identifier: str) -> User | None:
-        """Case-insensitive lookup matching either username or email.
+    def get_by_username_or_email(self, identifier: str, company_id: int) -> User | None:
+        """Case-insensitive lookup matching either username or email, scoped
+        to one company by an explicit parameter rather than this
+        repository's own construction-time company_id.
 
         Lets ``username`` remain the one documented login field while still
         accepting an email address, without adding a second login field.
 
-        Always unscoped in practice: this method is only ever called from
-        AuthService.authenticate, which constructs this repository with no
-        company_id (see class docstring) - company-code-first login lookup
-        scoping is a later milestone, not touched here.
+        The company_id is required here (unlike this class's other methods,
+        which fall back to construction-time scoping) because
+        AuthService.login resolves the company fresh on every call from the
+        request's company_code, not once when the repository is built -
+        username/email are only unique *within* a company
+        (UNIQUE(company_id, username/email)), so an unscoped lookup here
+        would be ambiguous the moment two companies share a username.
         """
         normalized = identifier.strip().lower()
         return self.db.scalar(
-            self._scope(
-                select(User).where(
-                    or_(
-                        func.lower(User.username) == normalized,
-                        func.lower(User.email) == normalized,
-                    )
-                )
+            select(User).where(
+                User.company_id == company_id,
+                or_(
+                    func.lower(User.username) == normalized,
+                    func.lower(User.email) == normalized,
+                ),
             )
         )
 

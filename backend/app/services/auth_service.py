@@ -9,7 +9,9 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.models.company import Company
 from app.models.user import User
+from app.repositories.company import CompanyRepository
 from app.repositories.role import RoleRepository
 from app.repositories.user import UserRepository
 from app.schemas.auth import RefreshResponse, RegisterRequest, TokenResponse
@@ -20,12 +22,33 @@ _SELF_REGISTER_ROLE_NAME = "Employee"
 
 
 class InvalidCredentialsError(Exception):
-    """Raised when login fails, for any reason.
+    """Raised when login fails, for any reason other than a suspended
+    company (see CompanySuspendedError).
 
-    Deliberately does not distinguish "unknown username" from "wrong
-    password" from "inactive account" - the route always turns this into
-    the same 401 response, so a caller can't use the error to probe which
-    accounts are registered or whether one is disabled.
+    Deliberately does not distinguish "unknown company code" from "unknown
+    username" from "wrong password" from "inactive account" - the route
+    always turns this into the same 401 response, so a caller can't use the
+    error to probe which company codes are valid, which accounts are
+    registered, or whether one is disabled.
+    """
+
+
+class CompanyNotFoundError(Exception):
+    """Raised by resolve_company when no company matches the given code.
+
+    Unlike login, resolve_company deliberately *does* reveal this
+    distinctly (as a 404) - company codes are meant to be shared among a
+    company's own employees to type in, not secrets, so confirming a code's
+    existence here is standard SaaS UX, not a credential leak. login()
+    keeps this folded into the generic InvalidCredentialsError instead;
+    see that method's docstring.
+    """
+
+
+class CompanySuspendedError(Exception):
+    """Raised when a company exists but has been deactivated
+    (is_active=False) - surfaced as a distinct, honest rejection both at
+    resolve_company and at login, unlike every other login failure.
     """
 
 
@@ -54,6 +77,7 @@ class AuthService:
         db: Session,
         user_repository: UserRepository | None = None,
         role_repository: RoleRepository | None = None,
+        company_repository: CompanyRepository | None = None,
     ) -> None:
         self._db = db
         self._user_repository = (
@@ -62,10 +86,39 @@ class AuthService:
         self._role_repository = (
             role_repository if role_repository is not None else RoleRepository(db)
         )
+        self._company_repository = (
+            company_repository if company_repository is not None else CompanyRepository(db)
+        )
 
-    def authenticate(self, username: str, password: str) -> User:
-        """Return the matching active user, or raise InvalidCredentialsError."""
-        user = self._user_repository.get_by_username_or_email(username)
+    def resolve_company(self, company_code: str) -> Company:
+        """POST /auth/resolve-company: look up a company by its code, for
+        the login screen to display before asking for credentials.
+
+        Unlike login(), this deliberately reveals whether a code exists and
+        whether it's suspended - see CompanyNotFoundError/
+        CompanySuspendedError's docstrings for why that's an acceptable,
+        intentional exception to this service's usual non-disclosure.
+        """
+        company = self._company_repository.get_by_code(company_code)
+        if company is None:
+            raise CompanyNotFoundError
+        if not company.is_active:
+            raise CompanySuspendedError
+        return company
+
+    def authenticate(self, company_code: str, username: str, password: str) -> User:
+        """Return the matching active user in the given company, or raise
+        InvalidCredentialsError (or CompanySuspendedError - see class
+        docstrings)."""
+        company = self._company_repository.get_by_code(company_code)
+        if company is None:
+            # Folded into the generic credentials error here (unlike
+            # resolve_company) so login can't be used to probe which
+            # company codes are valid.
+            raise InvalidCredentialsError
+        if not company.is_active:
+            raise CompanySuspendedError
+        user = self._user_repository.get_by_username_or_email(username, company.id)
         if user is None or not verify_password(password, user.password_hash):
             raise InvalidCredentialsError
         if not user.is_active:
@@ -79,9 +132,9 @@ class AuthService:
             token_type="bearer",
         )
 
-    def login(self, username: str, password: str) -> TokenResponse:
+    def login(self, company_code: str, username: str, password: str) -> TokenResponse:
         """Authenticate then issue an access + refresh token pair. Read-only."""
-        user = self.authenticate(username, password)
+        user = self.authenticate(company_code, username, password)
         return self.issue_tokens(user)
 
     def register(self, payload: RegisterRequest) -> TokenResponse:

@@ -31,13 +31,16 @@ interface NavSection {
 
 /**
  * Per-role nav. Employee sees "My Tickets", Technician "Assigned Tickets",
- * Manager/Administrator "All Tickets" - all four point at the same /tickets
+ * Company Administrator "All Tickets" - all point at the same /tickets
  * route, which the backend already scopes correctly per role (see
- * GET /all-tickets). The Administrator-only admin console is split into a
- * MAIN section (Dashboard/Tickets) and a MANAGEMENT section (the resources
- * an admin configures). Priorities has no management page here - the four
- * levels are fixed values, not admin-editable records - but priority data
- * itself still flows everywhere else (tickets, filters, badges, charts).
+ * GET /all-tickets). The Company-Administrator-only admin console is split
+ * into a MAIN section (Dashboard/Tickets) and a MANAGEMENT section (the
+ * resources an admin configures). Priorities has no management page here -
+ * the four levels are fixed values, not admin-editable records - but
+ * priority data itself still flows everywhere else (tickets, filters,
+ * badges, charts). System Administrator has no real UI yet - it's a
+ * platform-level role served by its own console in a future milestone, not
+ * this authenticated company app shell.
  */
 const NAV_BY_ROLE: Record<Role, NavSection[]> = {
   Employee: [
@@ -57,15 +60,7 @@ const NAV_BY_ROLE: Record<Role, NavSection[]> = {
       ],
     },
   ],
-  Manager: [
-    {
-      items: [
-        { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-        { label: "All Tickets", path: "/tickets", icon: Ticket, end: true },
-      ],
-    },
-  ],
-  Administrator: [
+  "Company Administrator": [
     {
       title: "Main",
       items: [
@@ -83,6 +78,7 @@ const NAV_BY_ROLE: Record<Role, NavSection[]> = {
       ],
     },
   ],
+  "System Administrator": [],
 };
 
 const FUTURE_PAGES = [{ label: "Reports", icon: BarChart3 }];

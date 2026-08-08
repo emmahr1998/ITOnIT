@@ -5,10 +5,25 @@
  */
 
 /** The only four roles that exist (backend/app/scripts/seed_initial_data.py). */
-export type Role = "Employee" | "Technician" | "Manager" | "Administrator";
+export type Role = "Employee" | "Technician" | "Company Administrator" | "System Administrator";
+
+/** POST /auth/resolve-company request body. */
+export interface CompanyCodeRequest {
+  company_code: string;
+}
+
+/**
+ * POST /auth/resolve-company response body - just enough for the login
+ * screen to display which company a code belongs to.
+ */
+export interface CompanyResolveResponse {
+  company_name: string;
+  company_logo: string | null;
+}
 
 /** POST /auth/login request body. */
 export interface LoginRequest {
+  company_code: string;
   username: string;
   password: string;
 }

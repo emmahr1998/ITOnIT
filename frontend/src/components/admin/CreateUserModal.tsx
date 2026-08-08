@@ -4,9 +4,8 @@ import { ErrorMessage } from "../common/ErrorMessage";
 import { createUser } from "../../api/users";
 import { getApiErrorMessage } from "../../api/client";
 import { ROLE_ID_BY_NAME, ROLE_OPTIONS } from "../../types/user";
-import type { AdminUser } from "../../types/user";
+import type { AdminUser, AssignableRole } from "../../types/user";
 import type { Department } from "../../types/department";
-import type { Role } from "../../types/auth";
 import styles from "./UserEditModal.module.css";
 
 interface CreateUserModalProps {
@@ -22,7 +21,7 @@ export function CreateUserModal({ departments, onClose, onCreated }: CreateUserM
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [departmentId, setDepartmentId] = useState("");
-  const [role, setRole] = useState<Role>("Employee");
+  const [role, setRole] = useState<AssignableRole>("Employee");
   const [password, setPassword] = useState("");
 
   const [saving, setSaving] = useState(false);
@@ -139,7 +138,7 @@ export function CreateUserModal({ departments, onClose, onCreated }: CreateUserM
             <span className="fieldLabel">Role</span>
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value as Role)}
+              onChange={(e) => setRole(e.target.value as AssignableRole)}
               className="select"
             >
               {ROLE_OPTIONS.map((r) => (
