@@ -12,6 +12,7 @@ import { UsersPage } from "../pages/admin/UsersPage";
 import { CategoriesPage } from "../pages/admin/CategoriesPage";
 import { DepartmentsPage } from "../pages/admin/DepartmentsPage";
 import { LocationsPage } from "../pages/admin/LocationsPage";
+import { PrioritiesPage } from "../pages/admin/PrioritiesPage";
 import { CompanySettingsPage } from "../pages/admin/CompanySettingsPage";
 import { AboutPage } from "../pages/AboutPage";
 
@@ -76,6 +77,14 @@ export function AppRouter() {
             element={
               <ProtectedRoute allowedRoles={[...ADMIN_ROLES]}>
                 <LocationsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/priorities"
+            element={
+              <ProtectedRoute allowedRoles={[...ADMIN_ROLES]}>
+                <PrioritiesPage />
               </ProtectedRoute>
             }
           />
