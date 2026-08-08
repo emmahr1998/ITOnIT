@@ -1,8 +1,10 @@
 from collections.abc import Callable
+from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import hash_password
 from app.models.category import Category
 from app.models.company import Company
@@ -17,7 +19,14 @@ from app.repositories.location import LocationRepository
 from app.repositories.priority import PriorityRepository
 from app.repositories.role import RoleRepository
 from app.repositories.user import UserRepository
-from app.schemas.company import CompanyRegisterRequest
+from app.schemas.company import CompanyRegisterRequest, CompanyUpdateRequest
+from app.services.storage_service import StorageService
+
+# Same allowlist rationale as AttachmentService's _ALLOWED_EXTENSIONS, scoped
+# to images only - a logo is a brand image, not a general file upload. SVG
+# is deliberately excluded: it can embed scripts, and this file is later
+# served back publicly (see GET /companies/{id}/logo).
+_ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 # The one role every self-registered company's first user is created with -
 # never client-selectable (CompanyRegisterRequest has no role_id field at
@@ -50,6 +59,27 @@ class CompanyCodeConflictError(Exception):
     not merely unique per company - see Company.company_code)."""
 
 
+class CompanyNotFoundError(Exception):
+    """Raised when a company id does not exist.
+
+    Only reachable from the public GET /companies/{id}/logo route - every
+    authenticated caller's company_id (from get_current_company_id) is
+    guaranteed to reference a real row, so this can't happen on /companies/me.
+    """
+
+
+class LogoNotFoundError(Exception):
+    """Raised when a company exists but has no logo uploaded."""
+
+
+class InvalidLogoError(Exception):
+    """Raised when a logo upload is empty, oversized, or an unsupported file type."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
 class CompanyService:
     """Owns company self-registration: creates the company, its first
     Company Administrator, and starter company data, all in one
@@ -71,6 +101,7 @@ class CompanyService:
         db: Session,
         company_repository: CompanyRepository | None = None,
         role_repository: RoleRepository | None = None,
+        storage_service: StorageService | None = None,
         user_repository_factory: Callable[[int], UserRepository] | None = None,
         priority_repository_factory: Callable[[int], PriorityRepository] | None = None,
         category_repository_factory: Callable[[int], CategoryRepository] | None = None,
@@ -80,6 +111,11 @@ class CompanyService:
         self._db = db
         self._company_repository = company_repository or CompanyRepository(db)
         self._role_repository = role_repository or RoleRepository(db)
+        self._storage_service = (
+            storage_service
+            if storage_service is not None
+            else StorageService(settings.LOGO_STORAGE_PATH)
+        )
         self._user_repository_factory = user_repository_factory or (
             lambda company_id: UserRepository(db, company_id)
         )
@@ -167,6 +203,92 @@ class CompanyService:
             raise CompanyCodeConflictError from exc
 
         return admin
+
+    def get_company(self, company_id: int) -> Company:
+        company = self._company_repository.get_by_id(company_id)
+        if company is None:
+            raise CompanyNotFoundError
+        return company
+
+    def update_company(self, company_id: int, payload: CompanyUpdateRequest) -> Company:
+        """Apply a partial update to the caller's own company.
+
+        Same "only touch fields the client actually sent" convention as
+        UserService.update_user: payload.model_fields_set distinguishes an
+        omitted field (leave unchanged) from one explicitly sent as null
+        (e.g. clearing contact_email), which a plain `is not None` check
+        can't do.
+        """
+        company = self.get_company(company_id)
+        fields_set = payload.model_fields_set
+
+        if "company_code" in fields_set and payload.company_code is not None:
+            if payload.company_code.lower() != company.company_code.lower():
+                existing = self._company_repository.get_by_code(payload.company_code)
+                if existing is not None and existing.id != company_id:
+                    raise CompanyCodeConflictError
+                company.company_code = payload.company_code
+        if "name" in fields_set and payload.name is not None:
+            company.name = payload.name
+        if "contact_email" in fields_set:
+            company.contact_email = payload.contact_email
+
+        try:
+            self._company_repository.update(company)
+            self._db.commit()
+        except IntegrityError as exc:
+            # Defense in depth: a concurrent request could pass the
+            # company_code check above and lose the race to the database's
+            # own unique constraint.
+            self._db.rollback()
+            raise CompanyCodeConflictError from exc
+        return company
+
+    def upload_logo(
+        self,
+        company_id: int,
+        original_filename: str,
+        content: bytes,
+    ) -> Company:
+        if not content:
+            raise InvalidLogoError("Uploaded file is empty")
+        if len(content) > settings.MAX_LOGO_SIZE_BYTES:
+            raise InvalidLogoError("Uploaded file exceeds the maximum allowed size")
+
+        extension = Path(original_filename or "").suffix.lower()
+        if extension not in _ALLOWED_LOGO_EXTENSIONS:
+            raise InvalidLogoError(f"Unsupported file type: {extension or 'unknown'}")
+
+        company = self.get_company(company_id)
+        previous_logo_path = company.logo_path
+
+        # Never trust the client's declared filename for storage - only its
+        # (already-validated) extension survives into the generated name.
+        stored_filename = self._storage_service.generate_stored_filename(original_filename)
+        self._storage_service.save(stored_filename, content)
+
+        company.logo_path = stored_filename
+        self._company_repository.update(company)
+        self._db.commit()
+
+        # Delete the old file only after the new one is safely stored and
+        # committed - the same ordering AttachmentService.delete_attachment
+        # uses, for the same reason: a crash between these two steps leaves
+        # a harmless orphaned file on disk, never a DB row pointing at a
+        # file that's already gone.
+        if previous_logo_path:
+            self._storage_service.delete(previous_logo_path)
+
+        return company
+
+    def get_logo(self, company_id: int) -> tuple[str, bytes]:
+        """Returns (stored_filename, content) for GET /companies/{id}/logo -
+        a public route, since a company's own logo isn't sensitive (same
+        reasoning as resolve-company's non-disclosure exception)."""
+        company = self.get_company(company_id)
+        if not company.logo_path:
+            raise LogoNotFoundError
+        return company.logo_path, self._storage_service.load(company.logo_path)
 
     def _seed_defaults(self, company_id: int) -> None:
         priority_repository = self._priority_repository_factory(company_id)

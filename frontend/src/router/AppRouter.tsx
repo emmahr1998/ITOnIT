@@ -12,6 +12,7 @@ import { UsersPage } from "../pages/admin/UsersPage";
 import { CategoriesPage } from "../pages/admin/CategoriesPage";
 import { DepartmentsPage } from "../pages/admin/DepartmentsPage";
 import { LocationsPage } from "../pages/admin/LocationsPage";
+import { CompanySettingsPage } from "../pages/admin/CompanySettingsPage";
 import { AboutPage } from "../pages/AboutPage";
 
 const CREATE_TICKET_ROLES = ["Employee", "Company Administrator"] as const;
@@ -75,6 +76,14 @@ export function AppRouter() {
             element={
               <ProtectedRoute allowedRoles={[...ADMIN_ROLES]}>
                 <LocationsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/company-settings"
+            element={
+              <ProtectedRoute allowedRoles={[...ADMIN_ROLES]}>
+                <CompanySettingsPage />
               </ProtectedRoute>
             }
           />

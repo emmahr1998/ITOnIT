@@ -11,6 +11,7 @@ from app.schemas.auth import (
     RefreshResponse,
     TokenResponse,
 )
+from app.schemas.company import company_logo_url
 from app.services.auth_service import (
     AuthService,
     CompanyNotFoundError,
@@ -40,7 +41,10 @@ def resolve_company(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found") from exc
     except CompanySuspendedError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, _COMPANY_SUSPENDED_DETAIL) from exc
-    return CompanyResolveResponse(company_name=company.name, company_logo=company.logo_path)
+    return CompanyResolveResponse(
+        company_name=company.name,
+        company_logo=company_logo_url(company.id, company.logo_path),
+    )
 
 
 @router.post("/login", response_model=TokenResponse)

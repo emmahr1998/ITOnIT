@@ -272,6 +272,11 @@ class FakeCompanyRepository:
         self._by_id[obj.id] = obj
         return obj
 
+    def update(self, obj: Company) -> Company:
+        obj.updated_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
 
 class FakeCategoryRepository:
     """In-memory stand-in for CategoryRepository. Same rationale as FakeUserRepository."""
@@ -743,6 +748,9 @@ def company_a() -> Company:
         id=COMPANY_A_ID,
         name="Company A",
         company_code=COMPANY_A_CODE,
+        theme="light",
+        timezone="UTC",
+        language="en",
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -756,6 +764,9 @@ def company_b() -> Company:
         id=COMPANY_B_ID,
         name="Company B",
         company_code=COMPANY_B_CODE,
+        theme="light",
+        timezone="UTC",
+        language="en",
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -773,6 +784,9 @@ def suspended_company() -> Company:
         id=SUSPENDED_COMPANY_ID,
         name="Suspended Company",
         company_code=SUSPENDED_COMPANY_CODE,
+        theme="light",
+        timezone="UTC",
+        language="en",
         is_active=False,
         created_at=now,
         updated_at=now,
@@ -1600,6 +1614,7 @@ def client(
             db=FakeSession(),
             company_repository=company_repository,
             role_repository=role_repository,
+            storage_service=storage_service,
             user_repository_factory=lambda company_id: user_repository.scoped(company_id),
             priority_repository_factory=_priority_repo,
             category_repository_factory=_category_repo,
