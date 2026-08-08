@@ -29,13 +29,19 @@ export interface LoginRequest {
 }
 
 /**
- * POST /auth/register request body. Deliberately has no role_id field - the
- * backend always creates a self-registered account as an Employee.
+ * POST /companies/register request body. Deliberately has no role_id or
+ * company_id field - the backend always creates a brand new company and
+ * makes this the first Company Administrator within it, regardless of
+ * anything the client sends. Replaces the old POST /auth/register
+ * self-registration flow, which always created a bare, company-less
+ * Employee account.
  */
-export interface RegisterRequest {
-  username: string;
+export interface CompanyRegisterRequest {
+  company_name: string;
+  company_code: string;
   first_name: string;
   last_name: string;
+  username: string;
   email: string;
   password: string;
 }

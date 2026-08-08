@@ -26,9 +26,12 @@ frontend, see [`frontend/README.md`](frontend/README.md).
 - **Public landing page** — an unauthenticated visitor sees a marketing-style
   overview with links to sign in or register; no ticket or account data is ever
   exposed without logging in.
-- **Self-service registration** — anyone can create an account (`POST
-  /auth/register`), always as an Employee; the higher roles (Technician, Company
-  Administrator) can only be granted by a Company Administrator through `POST /users`.
+- **Company registration** — anyone can register a new company (`POST
+  /companies/register`), which creates the company, its first Company
+  Administrator, and starter default data (priorities, categories, a location, a
+  department) in one transaction, then signs the new admin in immediately.
+  Employees and Technicians never self-register - only a Company Administrator
+  can create them, through `POST /users`.
 - **Authentication** — username/email + password login, Argon2 password hashing, JWT
   access tokens (short-lived) and refresh tokens (long-lived) with distinct,
   non-interchangeable token types, and a client-side silent-refresh flow so a page
@@ -238,9 +241,10 @@ accounts, for local development and demos only - two Company Administrators
 | `technician` | `Technician123!` | Technician |
 | `employee` | `Employee123!` | Employee |
 
-Anyone can also create their own Employee-role account from the app itself via the
-public landing page → **Create account** (`/register`) — no seed script required for
-that path.
+Anyone can also register a brand new company from the app itself via the public
+landing page → **Register Company** (`/register`) — no seed script required for that
+path. This creates a new company with its own starter data, distinct from the
+`DEFAULT001` company the demo accounts above belong to.
 
 ## Running tests
 

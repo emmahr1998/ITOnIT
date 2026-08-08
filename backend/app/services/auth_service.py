@@ -1,24 +1,17 @@
 import jwt
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_refresh_token,
-    hash_password,
     verify_password,
 )
 from app.models.company import Company
 from app.models.user import User
 from app.repositories.company import CompanyRepository
-from app.repositories.role import RoleRepository
 from app.repositories.user import UserRepository
-from app.schemas.auth import RefreshResponse, RegisterRequest, TokenResponse
-
-# Every self-registered account is created with this role, never one chosen
-# by the client - see RegisterRequest's own docstring for why.
-_SELF_REGISTER_ROLE_NAME = "Employee"
+from app.schemas.auth import RefreshResponse, TokenResponse
 
 
 class InvalidCredentialsError(Exception):
@@ -59,16 +52,9 @@ class InvalidRefreshTokenError(Exception):
     """
 
 
-class UsernameConflictError(Exception):
-    """Raised when a registration's username is already taken."""
-
-
-class EmailConflictError(Exception):
-    """Raised when a registration's email is already taken."""
-
-
 class AuthService:
-    """Coordinates the login, refresh, and self-registration flows: locate
+    """Coordinates the login and refresh flows, and issues tokens on behalf
+    of company registration (see CompanyService.register_company): locate
     user, verify password, issue tokens.
     """
 
@@ -76,15 +62,11 @@ class AuthService:
         self,
         db: Session,
         user_repository: UserRepository | None = None,
-        role_repository: RoleRepository | None = None,
         company_repository: CompanyRepository | None = None,
     ) -> None:
         self._db = db
         self._user_repository = (
             user_repository if user_repository is not None else UserRepository(db)
-        )
-        self._role_repository = (
-            role_repository if role_repository is not None else RoleRepository(db)
         )
         self._company_repository = (
             company_repository if company_repository is not None else CompanyRepository(db)
@@ -135,46 +117,6 @@ class AuthService:
     def login(self, company_code: str, username: str, password: str) -> TokenResponse:
         """Authenticate then issue an access + refresh token pair. Read-only."""
         user = self.authenticate(company_code, username, password)
-        return self.issue_tokens(user)
-
-    def register(self, payload: RegisterRequest) -> TokenResponse:
-        """Create a new Employee-role account and sign them in immediately.
-
-        Public, unauthenticated endpoint - no admin approval or email
-        verification step exists in this project. Role is always Employee
-        (see _SELF_REGISTER_ROLE_NAME); a client can never self-assign
-        Technician/Company Administrator through this path.
-        """
-        if self._user_repository.get_by_username(payload.username) is not None:
-            raise UsernameConflictError
-        if self._user_repository.get_by_email(payload.email) is not None:
-            raise EmailConflictError
-
-        role = self._role_repository.get_by_name(_SELF_REGISTER_ROLE_NAME)
-        if role is None:
-            # Seeded roles are a deployment invariant, not user input - a
-            # missing Employee role means the database was never seeded.
-            raise RuntimeError(f"Role '{_SELF_REGISTER_ROLE_NAME}' is not seeded")
-
-        user = User(
-            username=payload.username,
-            first_name=payload.first_name,
-            last_name=payload.last_name,
-            email=payload.email,
-            role_id=role.id,
-            password_hash=hash_password(payload.password),
-            is_active=True,
-        )
-        user.role = role
-        try:
-            self._user_repository.create(user)
-            self._db.commit()
-        except IntegrityError as exc:
-            # Defense in depth: a concurrent request could pass the checks
-            # above and lose the race to the database's unique constraints.
-            self._db.rollback()
-            raise UsernameConflictError from exc
-
         return self.issue_tokens(user)
 
     def refresh_access_token(self, refresh_token: str) -> RefreshResponse:

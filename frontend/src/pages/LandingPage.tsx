@@ -13,7 +13,7 @@ const HIGHLIGHTS = [
   {
     icon: Users2,
     title: "Role-based access",
-    description: "Employees, technicians, managers, and administrators each see exactly what they need.",
+    description: "Employees, technicians, and company administrators each see exactly what they need.",
   },
   {
     icon: ShieldCheck,
@@ -27,6 +27,8 @@ const HIGHLIGHTS = [
  * Deliberately shows no ticket data or any other internal information -
  * just marketing copy and links into the authenticated app, since ticket
  * content is treated as sensitive internal data everywhere else in ITOnIT.
+ * /register is company registration, not personal account creation - see
+ * RegisterPage.
  */
 export function LandingPage() {
   const { status } = useAuth();
@@ -47,7 +49,7 @@ export function LandingPage() {
             Sign in
           </Link>
           <Link to="/register" className="btn btn-primary">
-            Create account
+            Register Company
           </Link>
         </nav>
       </header>
@@ -56,12 +58,12 @@ export function LandingPage() {
         <Mascot size={96} className={styles.heroMascot} />
         <h1 className={styles.heroTitle}>Fast, modern IT support for your organization.</h1>
         <p className={styles.heroSubtitle}>
-          ITOnIT is an internal ticketing system for reporting and resolving IT issues -
-          sign in with your existing account, or create a new one to get started.
+          ITOnIT is a multi-tenant IT ticketing platform - sign in to your company&rsquo;s
+          workspace, or register your company to get started.
         </p>
         <div className={styles.heroActions}>
           <Link to="/register" className="btn btn-primary">
-            Create your account
+            Register Your Company
           </Link>
           <Link to="/login" className="btn btn-secondary">
             Sign in
@@ -83,7 +85,8 @@ export function LandingPage() {
 
       <footer className={styles.footer}>
         <span>
-          <CheckCircle2 size={14} strokeWidth={2} /> Accounts created here start as Employees.
+          <CheckCircle2 size={14} strokeWidth={2} /> Registering creates your company&rsquo;s
+          workspace with you as its Company Administrator.
         </span>
       </footer>
     </div>

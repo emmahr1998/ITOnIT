@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { CurrentUser, RegisterRequest } from "../types/auth";
+import type { CompanyRegisterRequest, CurrentUser } from "../types/auth";
 
 export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -8,7 +8,7 @@ export interface AuthContextValue {
   status: AuthStatus;
   error: string | null;
   login: (companyCode: string, username: string, password: string) => Promise<void>;
-  register: (payload: RegisterRequest) => Promise<void>;
+  registerCompany: (payload: CompanyRegisterRequest) => Promise<void>;
   logout: () => void;
 }
 

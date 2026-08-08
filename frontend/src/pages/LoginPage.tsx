@@ -149,7 +149,7 @@ export function LoginPage() {
             </button>
 
             <p className={styles.switchRow}>
-              Don&rsquo;t have an account? <Link to="/register">Create one</Link>
+              New to ITOnIT? <Link to="/register">Register your company</Link>
             </p>
           </form>
         ) : (

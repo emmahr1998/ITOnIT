@@ -1,36 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.schemas.validators import validate_email_format
-
-
-class RegisterRequest(BaseModel):
-    """POST /auth/register request body. Public - no authentication required.
-
-    Deliberately has no role_id or department_id field: every self-registered
-    account is created as an Employee by AuthService.register, regardless of
-    what the client sends. Privileged roles (Technician/Company
-    Administrator) remain admin-provisioned only, via POST /users.
-    """
-
-    username: str = Field(min_length=1, max_length=50)
-    first_name: str = Field(min_length=1, max_length=100)
-    last_name: str = Field(min_length=1, max_length=100)
-    email: str = Field(min_length=1, max_length=255)
-    password: str = Field(min_length=8)
-
-    @field_validator("username", "first_name", "last_name", "email")
-    @classmethod
-    def _strip(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("must not be empty")
-        return stripped
-
-    @field_validator("email")
-    @classmethod
-    def _valid_email(cls, value: str) -> str:
-        return validate_email_format(value)
-
 
 class CompanyCodeRequest(BaseModel):
     """POST /auth/resolve-company request body."""

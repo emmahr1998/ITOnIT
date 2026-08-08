@@ -4,7 +4,8 @@ import { CheckCircle2 } from "lucide-react";
 import { ErrorMessage } from "../components/common/ErrorMessage";
 import { Mascot } from "../components/common/Mascot";
 import { useAuth } from "../auth/useAuth";
-import styles from "./LoginPage.module.css";
+import loginStyles from "./LoginPage.module.css";
+import styles from "./RegisterPage.module.css";
 
 const FEATURES = [
   "Submit and track support tickets",
@@ -12,15 +13,27 @@ const FEATURES = [
   "A full history on every request",
 ];
 
+// Mirrors the backend's validate_company_code_format
+// (backend/app/schemas/validators.py) - kept in sync deliberately, so an
+// obviously-invalid code is caught here instead of round-tripping to the
+// server first.
+const COMPANY_CODE_PATTERN = /^[A-Za-z0-9_-]{3,20}$/;
+
 export function RegisterPage() {
-  const { register, status, error } = useAuth();
+  const { registerCompany, status, error } = useAuth();
   const navigate = useNavigate();
 
-  const [username, setUsername] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [companyCode, setCompanyCode] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  const [companyCodeError, setCompanyCodeError] = useState<string | null>(null);
+  const [confirmPasswordError, setConfirmPasswordError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   if (status === "authenticated") {
@@ -29,12 +42,29 @@ export function RegisterPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setCompanyCodeError(null);
+    setConfirmPasswordError(null);
+
+    const trimmedCode = companyCode.trim();
+    if (!COMPANY_CODE_PATTERN.test(trimmedCode)) {
+      setCompanyCodeError(
+        "Company code must be 3-20 characters: letters, numbers, hyphens, or underscores only.",
+      );
+      return;
+    }
+    if (password !== confirmPassword) {
+      setConfirmPasswordError("Passwords do not match.");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await register({
-        username: username.trim(),
+      await registerCompany({
+        company_name: companyName.trim(),
+        company_code: trimmedCode,
         first_name: firstName.trim(),
         last_name: lastName.trim(),
+        username: username.trim(),
         email: email.trim(),
         password,
       });
@@ -47,15 +77,17 @@ export function RegisterPage() {
   }
 
   return (
-    <div className={styles.page}>
-      <div className={styles.brandPanel}>
-        <div className={styles.brandContent}>
-          <Mascot size={120} className={styles.mascot} />
-          <div className={styles.brandMark}>
+    <div className={loginStyles.page}>
+      <div className={loginStyles.brandPanel}>
+        <div className={loginStyles.brandContent}>
+          <Mascot size={120} className={loginStyles.mascot} />
+          <div className={loginStyles.brandMark}>
             <span>ITOnIT</span>
           </div>
-          <h1 className={styles.brandHeadline}>Fast, modern IT support for your organization.</h1>
-          <ul className={styles.featureList}>
+          <h1 className={loginStyles.brandHeadline}>
+            Fast, modern IT support for your organization.
+          </h1>
+          <ul className={loginStyles.featureList}>
             {FEATURES.map((feature) => (
               <li key={feature}>
                 <CheckCircle2 size={18} strokeWidth={2} />
@@ -66,95 +98,159 @@ export function RegisterPage() {
         </div>
       </div>
 
-      <div className={styles.formPanel}>
-        <form className={styles.card} onSubmit={handleSubmit}>
-          <div className={styles.cardHeader}>
-            <h2 className={styles.title}>Create your account</h2>
-            <p className={styles.subtitle}>
-              New accounts are created as Employees, able to submit and track their own tickets.
+      <div className={loginStyles.formPanel}>
+        <form className={`${loginStyles.card} ${styles.card}`} onSubmit={handleSubmit}>
+          <div className={loginStyles.cardHeader}>
+            <h2 className={loginStyles.title}>Register Your Company</h2>
+            <p className={loginStyles.subtitle}>
+              Set up your company&rsquo;s workspace and sign in as its first Company
+              Administrator.
             </p>
           </div>
 
-          <label className="field">
-            <span className="fieldLabel">
-              Username<span className="requiredMark">*</span>
-            </span>
-            <input
-              type="text"
-              className="input"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              autoComplete="username"
-              autoFocus
-              required
-            />
-          </label>
+          <div className={styles.section}>
+            <h3 className={styles.sectionTitle}>Company Information</h3>
 
-          <div className={styles.nameRow}>
             <label className="field">
               <span className="fieldLabel">
-                First Name<span className="requiredMark">*</span>
+                Company Name<span className="requiredMark">*</span>
               </span>
               <input
                 type="text"
                 className="input"
-                value={firstName}
-                onChange={(event) => setFirstName(event.target.value)}
-                autoComplete="given-name"
+                value={companyName}
+                onChange={(event) => setCompanyName(event.target.value)}
+                autoComplete="organization"
+                autoFocus
                 required
               />
             </label>
+
             <label className="field">
               <span className="fieldLabel">
-                Last Name<span className="requiredMark">*</span>
+                Company Code<span className="requiredMark">*</span>
               </span>
               <input
                 type="text"
                 className="input"
-                value={lastName}
-                onChange={(event) => setLastName(event.target.value)}
-                autoComplete="family-name"
+                value={companyCode}
+                onChange={(event) => setCompanyCode(event.target.value)}
+                minLength={3}
+                maxLength={20}
                 required
               />
+              <span className={styles.hint}>
+                A short, unique code your team will type in to sign in (e.g.{" "}
+                <strong>ACME01</strong>). Letters, numbers, hyphens, and underscores only.
+              </span>
+              {companyCodeError && <ErrorMessage message={companyCodeError} />}
             </label>
           </div>
 
-          <label className="field">
-            <span className="fieldLabel">
-              Email<span className="requiredMark">*</span>
-            </span>
-            <input
-              type="email"
-              className="input"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
-              required
-            />
-          </label>
+          <div className={styles.section}>
+            <h3 className={styles.sectionTitle}>Company Administrator</h3>
 
-          <label className="field">
-            <span className="fieldLabel">
-              Password<span className="requiredMark">*</span>
-            </span>
-            <input
-              type="password"
-              className="input"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="new-password"
-              minLength={8}
-              required
-            />
-          </label>
+            <div className={loginStyles.nameRow}>
+              <label className="field">
+                <span className="fieldLabel">
+                  First Name<span className="requiredMark">*</span>
+                </span>
+                <input
+                  type="text"
+                  className="input"
+                  value={firstName}
+                  onChange={(event) => setFirstName(event.target.value)}
+                  autoComplete="given-name"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span className="fieldLabel">
+                  Last Name<span className="requiredMark">*</span>
+                </span>
+                <input
+                  type="text"
+                  className="input"
+                  value={lastName}
+                  onChange={(event) => setLastName(event.target.value)}
+                  autoComplete="family-name"
+                  required
+                />
+              </label>
+            </div>
+
+            <label className="field">
+              <span className="fieldLabel">
+                Username<span className="requiredMark">*</span>
+              </span>
+              <input
+                type="text"
+                className="input"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                autoComplete="username"
+                required
+              />
+            </label>
+
+            <label className="field">
+              <span className="fieldLabel">
+                Email<span className="requiredMark">*</span>
+              </span>
+              <input
+                type="email"
+                className="input"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+
+            <div className={loginStyles.nameRow}>
+              <label className="field">
+                <span className="fieldLabel">
+                  Password<span className="requiredMark">*</span>
+                </span>
+                <input
+                  type="password"
+                  className="input"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span className="fieldLabel">
+                  Confirm Password<span className="requiredMark">*</span>
+                </span>
+                <input
+                  type="password"
+                  className="input"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+              </label>
+            </div>
+            {confirmPasswordError && <ErrorMessage message={confirmPasswordError} />}
+          </div>
 
           {error && <ErrorMessage message={error} />}
 
-          <button type="submit" className={`btn btn-primary ${styles.submitButton}`} disabled={submitting}>
-            {submitting ? "Creating account..." : "Create account"}
+          <button
+            type="submit"
+            className={`btn btn-primary ${loginStyles.submitButton}`}
+            disabled={submitting}
+          >
+            {submitting ? "Creating your company..." : "Register Company"}
           </button>
 
-          <p className={styles.switchRow}>
+          <p className={loginStyles.switchRow}>
             Already have an account? <Link to="/login">Sign in</Link>
           </p>
         </form>
