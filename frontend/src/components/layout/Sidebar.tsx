@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 import {
   BarChart3,
   Building2,
+  Flag,
   Info,
   LayoutDashboard,
   LogOut,
@@ -36,12 +37,11 @@ interface NavSection {
  * route, which the backend already scopes correctly per role (see
  * GET /all-tickets). The Company-Administrator-only admin console is split
  * into a MAIN section (Dashboard/Tickets) and a MANAGEMENT section (the
- * resources an admin configures). Priorities has no management page here -
- * the four levels are fixed values, not admin-editable records - but
- * priority data itself still flows everywhere else (tickets, filters,
- * badges, charts). System Administrator has no real UI yet - it's a
- * platform-level role served by its own console in a future milestone, not
- * this authenticated company app shell.
+ * resources an admin configures, including Priorities - company-owned,
+ * admin-editable data, not fixed system values; see the Priorities admin
+ * page). System Administrator has no real UI yet - it's a platform-level
+ * role served by its own console in a future milestone, not this
+ * authenticated company app shell.
  */
 const NAV_BY_ROLE: Record<Role, NavSection[]> = {
   Employee: [
@@ -76,6 +76,7 @@ const NAV_BY_ROLE: Record<Role, NavSection[]> = {
         { label: "Departments", path: "/admin/departments", icon: Building2 },
         { label: "Categories", path: "/admin/categories", icon: Tags },
         { label: "Locations", path: "/admin/locations", icon: MapPin },
+        { label: "Priorities", path: "/admin/priorities", icon: Flag },
         { label: "Company Settings", path: "/admin/company-settings", icon: Settings },
       ],
     },
