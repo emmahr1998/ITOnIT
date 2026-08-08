@@ -12,6 +12,7 @@ from app.dependencies.attachment import get_attachment_service
 from app.dependencies.auth import get_auth_service, get_current_company_id, get_user_repository
 from app.dependencies.category import get_category_service
 from app.dependencies.comment import get_comment_service
+from app.dependencies.company import get_company_service
 from app.dependencies.department import get_department_service
 from app.dependencies.history import get_history_service
 from app.dependencies.location import get_location_service
@@ -35,6 +36,7 @@ from app.services.attachment_service import AttachmentService
 from app.services.auth_service import AuthService
 from app.services.category_service import CategoryService
 from app.services.comment_service import CommentService
+from app.services.company_service import CompanyService
 from app.services.department_service import DepartmentService
 from app.services.history_service import HistoryService
 from app.services.location_service import LocationService
@@ -250,6 +252,7 @@ class FakeCompanyRepository:
 
     def __init__(self, companies: list[Company]) -> None:
         self._by_id = {company.id: company for company in companies}
+        self._next_id = max(self._by_id, default=0) + 1
 
     def get_by_id(self, id_: int) -> Company | None:
         return self._by_id.get(id_)
@@ -259,6 +262,15 @@ class FakeCompanyRepository:
         return next(
             (c for c in self._by_id.values() if c.company_code.lower() == target), None
         )
+
+    def create(self, obj: Company) -> Company:
+        obj.id = self._next_id
+        self._next_id += 1
+        now = datetime.now(timezone.utc)
+        obj.created_at = now
+        obj.updated_at = now
+        self._by_id[obj.id] = obj
+        return obj
 
 
 class FakeCategoryRepository:
@@ -1559,6 +1571,42 @@ def client(
             department_repository=department_repository,
         )
 
+    def _company_service() -> CompanyService:
+        # Registration creates a brand-new company_id at call time (there
+        # is no authenticated caller to derive one from - this is the one
+        # public, unauthenticated write path in the whole app) - so, unlike
+        # every other override above, this mutates the shared fake
+        # repositories' .company_id to whatever id CompanyService.
+        # register_company assigns the new company, rather than one already
+        # known from get_current_company_id. Safe for the same reason as
+        # every other override here: one request in flight at a time.
+        def _priority_repo(company_id: int) -> FakePriorityRepository:
+            priority_repository.company_id = company_id
+            return priority_repository
+
+        def _category_repo(company_id: int) -> FakeCategoryRepository:
+            category_repository.company_id = company_id
+            return category_repository
+
+        def _location_repo(company_id: int) -> FakeLocationRepository:
+            location_repository.company_id = company_id
+            return location_repository
+
+        def _department_repo(company_id: int) -> FakeDepartmentRepository:
+            department_repository.company_id = company_id
+            return department_repository
+
+        return CompanyService(
+            db=FakeSession(),
+            company_repository=company_repository,
+            role_repository=role_repository,
+            user_repository_factory=lambda company_id: user_repository.scoped(company_id),
+            priority_repository_factory=_priority_repo,
+            category_repository_factory=_category_repo,
+            location_repository_factory=_location_repo,
+            department_repository_factory=_department_repo,
+        )
+
     def _ticket_service(company_id: int = Depends(get_current_company_id)) -> TicketService:
         ticket_repository.company_id = company_id
         category_repository.company_id = company_id
@@ -1607,9 +1655,9 @@ def client(
     app.dependency_overrides[get_auth_service] = lambda: AuthService(
         db=FakeSession(),
         user_repository=user_repository,
-        role_repository=role_repository,
         company_repository=company_repository,
     )
+    app.dependency_overrides[get_company_service] = _company_service
     app.dependency_overrides[get_category_service] = _category_service
     app.dependency_overrides[get_department_service] = _department_service
     app.dependency_overrides[get_priority_service] = _priority_service

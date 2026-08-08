@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { fetchCurrentUser, loginRequest, registerRequest } from "../api/auth";
+import { fetchCurrentUser, loginRequest, registerCompanyRequest } from "../api/auth";
 import { getApiErrorMessage } from "../api/client";
 import { tokenStore } from "../api/tokenStore";
-import type { CurrentUser, RegisterRequest } from "../types/auth";
+import type { CompanyRegisterRequest, CurrentUser } from "../types/auth";
 import { AuthContext, type AuthStatus } from "./AuthContext";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -78,10 +78,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const register = useCallback(async (payload: RegisterRequest) => {
+  const registerCompany = useCallback(async (payload: CompanyRegisterRequest) => {
     setError(null);
     try {
-      const tokens = await registerRequest(payload);
+      const tokens = await registerCompanyRequest(payload);
       tokenStore.setTokens({ access: tokens.access, refresh: tokens.refresh });
       const currentUser = await fetchCurrentUser();
       setUser(currentUser);
@@ -89,14 +89,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       tokenStore.clear();
       setStatus("unauthenticated");
-      setError(getApiErrorMessage(err, "Registration failed. Please try again."));
+      setError(getApiErrorMessage(err, "Company registration failed. Please try again."));
       throw err;
     }
   }, []);
 
   const value = useMemo(
-    () => ({ user, status, error, login, register, logout }),
-    [user, status, error, login, register, logout],
+    () => ({ user, status, error, login, registerCompany, logout }),
+    [user, status, error, login, registerCompany, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -7,9 +7,13 @@ owns the fix — so it isn't forgotten and isn't fixed twice.
 
 ## Multi-tenant migration (see the Company/SaaS architecture plan)
 
-### 1. `POST /auth/register` creates accounts with `company_id = None`
+### 1. ✅ RESOLVED — `POST /auth/register` created accounts with `company_id = None`
 
 **Found:** during the Milestone 2 tenant-isolation audit (2026-08-06).
+
+**Resolved:** 2026-08-08, as part of Milestone 5 (Company registration +
+default data seeding). No longer an open item - kept below for the
+historical record of what was wrong and why.
 
 **What's wrong:** `AuthService.register` (`backend/app/services/auth_service.py`)
 predates the multi-tenant plan and never sets `company_id` on the `User` it
@@ -38,11 +42,30 @@ tenant-isolation issue - just a harder dead end than before. Not fixed now,
 for the same reason as before: the real fix is company-code-first
 registration, which is Milestone 5's job.
 
-**Resolution:** remove or replace `POST /auth/register` with the
-company-code-first registration flow (`POST /companies/register`) during
-**Milestone 5 — Company registration + default data seeding**, which
-creates the company, the first Company Administrator, and seeds default
-data all in one transaction.
+**Fix applied:** `POST /auth/register` and `AuthService.register` were
+removed outright (not left as a redirect or deprecated alias) - replaced by
+`POST /companies/register` / `CompanyService.register_company`, which
+creates the company, its first Company Administrator, and starter company
+data (priorities, categories, a location, a department) all in one
+transaction, then signs the new admin in immediately. Employees and
+Technicians can no longer self-register at all - only a Company
+Administrator can create them afterward, via the existing `POST /users`.
+
+**Verified:** `POST /auth/register` now returns 404 (see
+test_auth.py::test_old_self_registration_endpoint_no_longer_exists);
+`tests/test_company_registration.py` covers the new endpoint end-to-end,
+including that a client-supplied `role_id`/`company_id` in the request
+body has no effect (the schema has no such fields at all - Pydantic
+silently drops unknown fields), and that two independently registered
+companies' seeded data and users stay isolated from each other.
+
+**One planned piece deferred further, not built here:** the architecture
+plan's Milestone 5 section also lists seeding starter Inventory Categories
+per company. The `inventory_categories` table doesn't exist yet - it's
+Milestone 10's job (Inventory core) - so building it now would mean
+throwaway inventory models ahead of schedule. `CompanyService._seed_defaults`
+has a comment marking exactly where that seeding call belongs once
+Milestone 10 lands.
 
 ### 2. ✅ RESOLVED — `app/scripts/seed_initial_data.py` and `scripts/create_demo_users.py` were stale under the multi-tenant model
 

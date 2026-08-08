@@ -1,10 +1,10 @@
 import { apiClient } from "./client";
 import type {
   CompanyCodeRequest,
+  CompanyRegisterRequest,
   CompanyResolveResponse,
   CurrentUser,
   LoginRequest,
-  RegisterRequest,
   TokenResponse,
 } from "../types/auth";
 
@@ -23,8 +23,10 @@ export async function loginRequest(payload: LoginRequest): Promise<TokenResponse
   return data;
 }
 
-export async function registerRequest(payload: RegisterRequest): Promise<TokenResponse> {
-  const { data } = await apiClient.post<TokenResponse>("/auth/register", payload);
+export async function registerCompanyRequest(
+  payload: CompanyRegisterRequest,
+): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>("/companies/register", payload);
   return data;
 }
 

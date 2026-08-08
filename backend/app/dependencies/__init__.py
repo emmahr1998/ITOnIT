@@ -9,6 +9,7 @@ from app.dependencies.auth import (
 )
 from app.dependencies.category import get_category_repository, get_category_service
 from app.dependencies.comment import get_comment_repository, get_comment_service
+from app.dependencies.company import get_company_repository, get_company_service
 from app.dependencies.database import get_db
 from app.dependencies.department import get_department_repository, get_department_service
 from app.dependencies.history import get_history_repository, get_history_service
@@ -34,6 +35,8 @@ __all__ = [
     "get_category_service",
     "get_comment_repository",
     "get_comment_service",
+    "get_company_repository",
+    "get_company_service",
     "get_department_repository",
     "get_department_service",
     "get_history_repository",
