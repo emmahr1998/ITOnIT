@@ -5,7 +5,7 @@ import { ErrorMessage } from "../components/common/ErrorMessage";
 import { Mascot } from "../components/common/Mascot";
 import { useAuth } from "../auth/useAuth";
 import { resolveCompanyRequest } from "../api/auth";
-import { getApiErrorMessage } from "../api/client";
+import { getApiErrorMessage, resolveAssetUrl } from "../api/client";
 import { companyStore } from "../api/companyStore";
 import styles from "./LoginPage.module.css";
 
@@ -157,7 +157,7 @@ export function LoginPage() {
             <div className={styles.cardHeader}>
               <div className={styles.companyBadge}>
                 {companyLogo ? (
-                  <img src={companyLogo} alt="" className={styles.companyLogo} />
+                  <img src={resolveAssetUrl(companyLogo)} alt="" className={styles.companyLogo} />
                 ) : (
                   <Building2 size={20} strokeWidth={1.75} />
                 )}

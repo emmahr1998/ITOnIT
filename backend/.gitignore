@@ -23,3 +23,7 @@ Thumbs.db
 # Uploaded attachments - metadata lives in the database, files do not get committed
 storage/attachments/*
 !storage/attachments/.gitkeep
+
+# Uploaded company logos - same reasoning as attachments above
+storage/logos/*
+!storage/logos/.gitkeep
