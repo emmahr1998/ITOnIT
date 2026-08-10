@@ -13,11 +13,18 @@ import { CategoriesPage } from "../pages/admin/CategoriesPage";
 import { DepartmentsPage } from "../pages/admin/DepartmentsPage";
 import { LocationsPage } from "../pages/admin/LocationsPage";
 import { PrioritiesPage } from "../pages/admin/PrioritiesPage";
+import { InventoryPage } from "../pages/admin/InventoryPage";
+import { InventoryCategoryPage } from "../pages/admin/InventoryCategoryPage";
 import { CompanySettingsPage } from "../pages/admin/CompanySettingsPage";
 import { AboutPage } from "../pages/AboutPage";
 
 const CREATE_TICKET_ROLES = ["Employee", "Company Administrator"] as const;
 const ADMIN_ROLES = ["Company Administrator"] as const;
+// Inventory pages are read-only for Technician (see InventoryPage/
+// InventoryCategoryPage's own canManage gating) but fully off-limits to
+// Employee - matching the backend's _VIEW_ROLES on both /inventory-items
+// and /inventory-categories.
+const INVENTORY_VIEW_ROLES = ["Company Administrator", "Technician"] as const;
 
 export function AppRouter() {
   return (
@@ -85,6 +92,22 @@ export function AppRouter() {
             element={
               <ProtectedRoute allowedRoles={[...ADMIN_ROLES]}>
                 <PrioritiesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/inventory"
+            element={
+              <ProtectedRoute allowedRoles={[...INVENTORY_VIEW_ROLES]}>
+                <InventoryPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/inventory-categories"
+            element={
+              <ProtectedRoute allowedRoles={[...INVENTORY_VIEW_ROLES]}>
+                <InventoryCategoryPage />
               </ProtectedRoute>
             }
           />

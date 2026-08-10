@@ -2,10 +2,12 @@ import type { ComponentType } from "react";
 import { NavLink } from "react-router-dom";
 import {
   BarChart3,
+  Boxes,
   Building2,
   Flag,
   Info,
   LayoutDashboard,
+  Layers,
   LogOut,
   MapPin,
   PlusCircle,
@@ -42,6 +44,11 @@ interface NavSection {
  * page). System Administrator has no real UI yet - it's a platform-level
  * role served by its own console in a future milestone, not this
  * authenticated company app shell.
+ *
+ * Inventory is the one Management resource Technician also gets a link to
+ * (read-only - see InventoryPage's own canManage gating) since technicians
+ * need to browse stock day-to-day; Technician has no "Inventory Categories"
+ * link, since that's a company-configuration page, not an operational one.
  */
 const NAV_BY_ROLE: Record<Role, NavSection[]> = {
   Employee: [
@@ -58,6 +65,7 @@ const NAV_BY_ROLE: Record<Role, NavSection[]> = {
       items: [
         { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
         { label: "Assigned Tickets", path: "/tickets", icon: Ticket, end: true },
+        { label: "Inventory", path: "/admin/inventory", icon: Boxes },
       ],
     },
   ],
@@ -77,6 +85,8 @@ const NAV_BY_ROLE: Record<Role, NavSection[]> = {
         { label: "Categories", path: "/admin/categories", icon: Tags },
         { label: "Locations", path: "/admin/locations", icon: MapPin },
         { label: "Priorities", path: "/admin/priorities", icon: Flag },
+        { label: "Inventory", path: "/admin/inventory", icon: Boxes },
+        { label: "Inventory Categories", path: "/admin/inventory-categories", icon: Layers },
         { label: "Company Settings", path: "/admin/company-settings", icon: Settings },
       ],
     },
