@@ -10,6 +10,7 @@ from app.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.company import Company
+    from app.models.inventory_item import InventoryItem
     from app.models.ticket import Ticket
 
 
@@ -38,3 +39,10 @@ class Location(TimestampMixin, Base):
 
     company: Mapped["Company"] = relationship(back_populates="locations")
     tickets: Mapped[list["Ticket"]] = relationship(back_populates="location")
+    # passive_deletes=True: this side must not try to load and null out its
+    # inventory items in Python before a delete - the DB's own
+    # ON DELETE SET NULL (see InventoryItem.current_location_id) already
+    # does that at the database level.
+    inventory_items: Mapped[list["InventoryItem"]] = relationship(
+        back_populates="current_location", passive_deletes=True
+    )

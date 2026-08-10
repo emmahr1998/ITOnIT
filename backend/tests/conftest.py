@@ -26,6 +26,7 @@ from app.models.comment import Comment
 from app.models.company import Company
 from app.models.department import Department
 from app.models.enums import TicketStatus
+from app.models.inventory_category import InventoryCategory
 from app.models.location import Location
 from app.models.priority import Priority
 from app.models.role import Role
@@ -327,6 +328,55 @@ class FakeCategoryRepository:
 
     def is_referenced_by_tickets(self, category_id: int) -> bool:
         return category_id in self.referenced_category_ids
+
+
+class FakeInventoryCategoryRepository:
+    """In-memory stand-in for InventoryCategoryRepository. Same rationale as
+    FakeCategoryRepository."""
+
+    def __init__(
+        self,
+        inventory_categories: list[InventoryCategory] | None = None,
+        company_id: int | None = None,
+    ) -> None:
+        self._by_id = {c.id: c for c in (inventory_categories or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+        self.company_id = company_id
+
+    def _in_scope(self, category: InventoryCategory) -> bool:
+        return self.company_id is None or category.company_id == self.company_id
+
+    def get_all(self) -> list[InventoryCategory]:
+        return [c for c in self._by_id.values() if self._in_scope(c)]
+
+    def get_by_id(self, id_: int) -> InventoryCategory | None:
+        category = self._by_id.get(id_)
+        return category if category is not None and self._in_scope(category) else None
+
+    def get_by_name(self, name: str) -> InventoryCategory | None:
+        target = name.strip().lower()
+        return next(
+            (
+                c
+                for c in self._by_id.values()
+                if c.name.lower() == target and self._in_scope(c)
+            ),
+            None,
+        )
+
+    def count_all(self) -> int:
+        return len(self.get_all())
+
+    def create(self, obj: InventoryCategory) -> InventoryCategory:
+        obj.id = self._next_id
+        self._next_id += 1
+        obj.created_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
+    def update(self, obj: InventoryCategory) -> InventoryCategory:
+        self._by_id[obj.id] = obj
+        return obj
 
 
 class FakeDepartmentRepository:
@@ -1463,6 +1513,15 @@ def category_repository(
 
 
 @pytest.fixture
+def inventory_category_repository() -> FakeInventoryCategoryRepository:
+    """Starts empty - no test needs a pre-existing inventory category
+    fixture the way category_repository needs hardware_category (referenced
+    by ticket fixtures). Registration tests populate this via
+    CompanyService._seed_defaults."""
+    return FakeInventoryCategoryRepository()
+
+
+@pytest.fixture
 def ticket_repository(
     employee_ticket: Ticket, assigned_ticket: Ticket, company_b_ticket: Ticket
 ) -> FakeTicketRepository:
@@ -1519,6 +1578,7 @@ def client(
     priority_repository: FakePriorityRepository,
     location_repository: FakeLocationRepository,
     category_repository: FakeCategoryRepository,
+    inventory_category_repository: FakeInventoryCategoryRepository,
     ticket_repository: FakeTicketRepository,
     comment_repository: FakeCommentRepository,
     history_repository: FakeHistoryRepository,
@@ -1610,6 +1670,10 @@ def client(
             department_repository.company_id = company_id
             return department_repository
 
+        def _inventory_category_repo(company_id: int) -> FakeInventoryCategoryRepository:
+            inventory_category_repository.company_id = company_id
+            return inventory_category_repository
+
         return CompanyService(
             db=FakeSession(),
             company_repository=company_repository,
@@ -1620,6 +1684,7 @@ def client(
             category_repository_factory=_category_repo,
             location_repository_factory=_location_repo,
             department_repository_factory=_department_repo,
+            inventory_category_repository_factory=_inventory_category_repo,
         )
 
     def _ticket_service(company_id: int = Depends(get_current_company_id)) -> TicketService:
