@@ -1,5 +1,5 @@
 from collections.abc import Callable, Iterator
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -15,6 +15,8 @@ from app.dependencies.comment import get_comment_service
 from app.dependencies.company import get_company_service
 from app.dependencies.department import get_department_service
 from app.dependencies.history import get_history_service
+from app.dependencies.inventory_category import get_inventory_category_service
+from app.dependencies.inventory_item import get_inventory_item_service
 from app.dependencies.location import get_location_service
 from app.dependencies.priority import get_priority_service
 from app.dependencies.ticket import get_ticket_service
@@ -25,8 +27,14 @@ from app.models.category import Category
 from app.models.comment import Comment
 from app.models.company import Company
 from app.models.department import Department
-from app.models.enums import TicketStatus
+from app.models.enums import (
+    InventoryCondition,
+    InventoryStatus,
+    InventoryTrackingType,
+    TicketStatus,
+)
 from app.models.inventory_category import InventoryCategory
+from app.models.inventory_item import InventoryItem
 from app.models.location import Location
 from app.models.priority import Priority
 from app.models.role import Role
@@ -40,6 +48,8 @@ from app.services.comment_service import CommentService
 from app.services.company_service import CompanyService
 from app.services.department_service import DepartmentService
 from app.services.history_service import HistoryService
+from app.services.inventory_category_service import InventoryCategoryService
+from app.services.inventory_item_service import InventoryItemService
 from app.services.location_service import LocationService
 from app.services.priority_service import PriorityService
 from app.services.ticket_service import TicketService
@@ -375,6 +385,153 @@ class FakeInventoryCategoryRepository:
         return obj
 
     def update(self, obj: InventoryCategory) -> InventoryCategory:
+        self._by_id[obj.id] = obj
+        return obj
+
+
+class FakeInventoryItemRepository:
+    """In-memory stand-in for InventoryItemRepository. Same rationale as
+    FakeTicketRepository - mirrors its real get_with_filters/
+    count_with_filters semantics (search fields, low_stock,
+    warranty_expiring_days, sortable-column allow-list) exactly, since the
+    tests exercising filters/search/sort/pagination need faithful behavior,
+    not just a passthrough.
+    """
+
+    _SORTABLE_KEYS: dict[str, Callable[["InventoryItem"], object]] = {
+        "created_at": lambda i: i.created_at,
+        "updated_at": lambda i: i.updated_at,
+        "name": lambda i: i.name,
+        "purchase_date": lambda i: i.purchase_date or date.min,
+        "warranty_expiration": lambda i: i.warranty_expiration or date.min,
+    }
+
+    def __init__(
+        self, items: list[InventoryItem] | None = None, company_id: int | None = None
+    ) -> None:
+        self._by_id = {i.id: i for i in (items or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+        self.company_id = company_id
+
+    def _in_scope(self, item: InventoryItem) -> bool:
+        return self.company_id is None or item.company_id == self.company_id
+
+    def get_by_id(self, id_: int) -> InventoryItem | None:
+        item = self._by_id.get(id_)
+        return item if item is not None and self._in_scope(item) else None
+
+    def get_by_asset_tag(self, asset_tag: str) -> InventoryItem | None:
+        target = asset_tag.strip().lower()
+        return next(
+            (
+                i
+                for i in self._by_id.values()
+                if i.asset_tag is not None
+                and i.asset_tag.lower() == target
+                and self._in_scope(i)
+            ),
+            None,
+        )
+
+    def _filtered(
+        self,
+        *,
+        inventory_category_id: int | None = None,
+        tracking_type: InventoryTrackingType | None = None,
+        status: InventoryStatus | None = None,
+        condition: InventoryCondition | None = None,
+        current_location_id: int | None = None,
+        current_holder_user_id: int | None = None,
+        manufacturer: str | None = None,
+        model: str | None = None,
+        search: str | None = None,
+        low_stock: bool | None = None,
+        warranty_expiring_days: int | None = None,
+    ) -> list[InventoryItem]:
+        results = [i for i in self._by_id.values() if self._in_scope(i)]
+        if inventory_category_id is not None:
+            results = [i for i in results if i.inventory_category_id == inventory_category_id]
+        if tracking_type is not None:
+            results = [i for i in results if i.tracking_type == tracking_type]
+        if status is not None:
+            results = [i for i in results if i.status == status]
+        if condition is not None:
+            results = [i for i in results if i.condition == condition]
+        if current_location_id is not None:
+            results = [i for i in results if i.current_location_id == current_location_id]
+        if current_holder_user_id is not None:
+            results = [i for i in results if i.current_holder_user_id == current_holder_user_id]
+        if manufacturer:
+            target = manufacturer.strip().lower()
+            results = [
+                i for i in results if (i.manufacturer or "").lower() == target
+            ]
+        if model:
+            target = model.strip().lower()
+            results = [i for i in results if (i.model or "").lower() == target]
+        if search:
+            needle = search.strip().lower()
+            results = [
+                i
+                for i in results
+                if needle in (i.name or "").lower()
+                or needle in (i.asset_tag or "").lower()
+                or needle in (i.serial_number or "").lower()
+                or needle in (i.manufacturer or "").lower()
+                or needle in (i.model or "").lower()
+                or needle in (i.supplier or "").lower()
+                or needle in (i.invoice_number or "").lower()
+            ]
+        if low_stock:
+            results = [
+                i
+                for i in results
+                if i.tracking_type == InventoryTrackingType.BULK
+                and i.minimum_stock is not None
+                and (i.stock_quantity - i.reserved_quantity) <= i.minimum_stock
+            ]
+        if warranty_expiring_days is not None:
+            today = datetime.now(timezone.utc).date()
+            horizon = today + timedelta(days=warranty_expiring_days)
+            results = [
+                i
+                for i in results
+                if i.warranty_expiration is not None and today <= i.warranty_expiration <= horizon
+            ]
+        return results
+
+    def get_with_filters(
+        self,
+        *,
+        sort_by: str = "created_at",
+        sort_dir: str = "desc",
+        skip: int | None = None,
+        limit: int | None = None,
+        **filters,
+    ) -> list[InventoryItem]:
+        results = self._filtered(**filters)
+        key_fn = self._SORTABLE_KEYS.get(sort_by, self._SORTABLE_KEYS["created_at"])
+        results = sorted(results, key=key_fn, reverse=(sort_dir != "asc"))
+        if skip is not None:
+            results = results[skip:]
+        if limit is not None:
+            results = results[:limit]
+        return results
+
+    def count_with_filters(self, **filters) -> int:
+        return len(self._filtered(**filters))
+
+    def create(self, obj: InventoryItem) -> InventoryItem:
+        obj.id = self._next_id
+        self._next_id += 1
+        now = datetime.now(timezone.utc)
+        obj.created_at = now
+        obj.updated_at = now
+        self._by_id[obj.id] = obj
+        return obj
+
+    def update(self, obj: InventoryItem) -> InventoryItem:
+        obj.updated_at = datetime.now(timezone.utc)
         self._by_id[obj.id] = obj
         return obj
 
@@ -1517,8 +1674,22 @@ def inventory_category_repository() -> FakeInventoryCategoryRepository:
     """Starts empty - no test needs a pre-existing inventory category
     fixture the way category_repository needs hardware_category (referenced
     by ticket fixtures). Registration tests populate this via
-    CompanyService._seed_defaults."""
+    CompanyService._seed_defaults; inventory item tests that need a
+    category create one directly against this fake (see
+    test_inventory_items.py's own local fixtures) rather than this fixture
+    pre-loading fixed rows - keeping it empty by default is load-bearing
+    for test_register_company_seeds_eleven_starter_inventory_categories,
+    which asserts on everything present in it."""
     return FakeInventoryCategoryRepository()
+
+
+@pytest.fixture
+def inventory_item_repository() -> FakeInventoryItemRepository:
+    """Starts empty - inventory item tests create whatever rows they need
+    directly against this fake (and against inventory_category_repository/
+    location_repository/user_repository for references), same rationale as
+    inventory_category_repository above."""
+    return FakeInventoryItemRepository()
 
 
 @pytest.fixture
@@ -1579,6 +1750,7 @@ def client(
     location_repository: FakeLocationRepository,
     category_repository: FakeCategoryRepository,
     inventory_category_repository: FakeInventoryCategoryRepository,
+    inventory_item_repository: FakeInventoryItemRepository,
     ticket_repository: FakeTicketRepository,
     comment_repository: FakeCommentRepository,
     history_repository: FakeHistoryRepository,
@@ -1633,6 +1805,31 @@ def client(
         location_repository.company_id = company_id
         return LocationService(
             db=FakeSession(), company_id=company_id, location_repository=location_repository
+        )
+
+    def _inventory_category_service(
+        company_id: int = Depends(get_current_company_id),
+    ) -> InventoryCategoryService:
+        inventory_category_repository.company_id = company_id
+        return InventoryCategoryService(
+            db=FakeSession(),
+            company_id=company_id,
+            inventory_category_repository=inventory_category_repository,
+        )
+
+    def _inventory_item_service(
+        company_id: int = Depends(get_current_company_id),
+    ) -> InventoryItemService:
+        inventory_item_repository.company_id = company_id
+        inventory_category_repository.company_id = company_id
+        location_repository.company_id = company_id
+        return InventoryItemService(
+            db=FakeSession(),
+            company_id=company_id,
+            item_repository=inventory_item_repository,
+            category_repository=inventory_category_repository,
+            location_repository=location_repository,
+            user_repository=user_repository.scoped(company_id),
         )
 
     def _user_service(company_id: int = Depends(get_current_company_id)) -> UserService:
@@ -1742,6 +1939,8 @@ def client(
     app.dependency_overrides[get_department_service] = _department_service
     app.dependency_overrides[get_priority_service] = _priority_service
     app.dependency_overrides[get_location_service] = _location_service
+    app.dependency_overrides[get_inventory_category_service] = _inventory_category_service
+    app.dependency_overrides[get_inventory_item_service] = _inventory_item_service
     app.dependency_overrides[get_user_service] = _user_service
     app.dependency_overrides[get_ticket_service] = _ticket_service
     app.dependency_overrides[get_comment_service] = _comment_service
