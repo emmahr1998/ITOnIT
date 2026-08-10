@@ -162,6 +162,40 @@ def test_register_company_seeds_general_department(client: TestClient) -> None:
     assert departments[0]["title"] == "General"
 
 
+def test_register_company_seeds_eleven_starter_inventory_categories(
+    client: TestClient, inventory_category_repository
+) -> None:
+    """No /inventory-categories route exists yet (Phase 10.1 is model +
+    migration + seeding only - see Milestone 10's approved scope), so this
+    inspects the fake repository CompanyService actually wrote to, rather
+    than going through an HTTP GET the way the other starter-data tests do.
+    inventory_category_repository starts empty (see its fixture) and this
+    test performs the only registration that touches it, so everything in
+    it afterward was seeded by this one call.
+    """
+    response = _register(
+        client, company_code="SEEDINV1", username="seedinvadmin", email="seedinv@example.com"
+    )
+    assert response.status_code == 201
+
+    seeded = inventory_category_repository.get_all()
+    assert len(seeded) == 11
+    assert {c.name for c in seeded} == {
+        "Laptop",
+        "Desktop",
+        "Monitor",
+        "Printer",
+        "Keyboard",
+        "Mouse",
+        "Dock",
+        "Phone",
+        "Network Equipment",
+        "Cable",
+        "Other",
+    }
+    assert all(c.is_active for c in seeded)
+
+
 # ---------------------------------------------------------------------------
 # Uniqueness rules
 # ---------------------------------------------------------------------------

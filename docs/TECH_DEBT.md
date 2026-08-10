@@ -67,6 +67,17 @@ throwaway inventory models ahead of schedule. `CompanyService._seed_defaults`
 has a comment marking exactly where that seeding call belongs once
 Milestone 10 lands.
 
+**Update, 2026-08-10 (Milestone 10, Phase 10.1):** resolved. `inventory_categories`
+now exists; `CompanyService._seed_defaults` seeds the eleven starter names
+for every newly registered company, and a dedicated, idempotent data
+migration (`backfill inventory categories for existing companies`) seeds the
+same list for every company that registered before this phase existed.
+Verified against the real dev database (existing `DEFAULT001` company
+backfilled to exactly 11 rows, re-running the backfill logic a second time
+adds none) and against a completely fresh, from-scratch database (same
+11-row result after running the full migration chain to head) - see Phase
+10.1's verification report for the complete results.
+
 ### 2. ✅ RESOLVED — `app/scripts/seed_initial_data.py` and `scripts/create_demo_users.py` were stale under the multi-tenant model
 
 **Found:** during the Milestone 2 tenant-isolation audit (2026-08-06).

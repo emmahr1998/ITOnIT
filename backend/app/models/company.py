@@ -11,6 +11,8 @@ from app.models.mixins import TimestampMixin
 if TYPE_CHECKING:
     from app.models.category import Category
     from app.models.department import Department
+    from app.models.inventory_category import InventoryCategory
+    from app.models.inventory_item import InventoryItem
     from app.models.location import Location
     from app.models.priority import Priority
     from app.models.ticket import Ticket
@@ -46,3 +48,7 @@ class Company(TimestampMixin, Base):
     categories: Mapped[list["Category"]] = relationship(back_populates="company")
     locations: Mapped[list["Location"]] = relationship(back_populates="company")
     priorities: Mapped[list["Priority"]] = relationship(back_populates="company")
+    inventory_categories: Mapped[list["InventoryCategory"]] = relationship(
+        back_populates="company"
+    )
+    inventory_items: Mapped[list["InventoryItem"]] = relationship(back_populates="company")

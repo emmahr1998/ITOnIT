@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.comment import Comment
     from app.models.company import Company
     from app.models.department import Department
+    from app.models.inventory_item import InventoryItem
     from app.models.role import Role
     from app.models.ticket import Ticket
     from app.models.ticket_history import TicketHistory
@@ -69,4 +70,12 @@ class User(TimestampMixin, Base):
     attachments: Mapped[list["Attachment"]] = relationship(back_populates="uploaded_by")
     history_entries: Mapped[list["TicketHistory"]] = relationship(
         back_populates="changed_by"
+    )
+    # passive_deletes=True: trust the DB's own ON DELETE SET NULL (see
+    # InventoryItem.current_holder_user_id) instead of SQLAlchemy trying to
+    # load and null these out in Python first.
+    held_inventory_items: Mapped[list["InventoryItem"]] = relationship(
+        back_populates="current_holder",
+        foreign_keys="InventoryItem.current_holder_user_id",
+        passive_deletes=True,
     )

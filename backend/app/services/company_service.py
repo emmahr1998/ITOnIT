@@ -9,12 +9,14 @@ from app.core.security import hash_password
 from app.models.category import Category
 from app.models.company import Company
 from app.models.department import Department
+from app.models.inventory_category import InventoryCategory
 from app.models.location import Location
 from app.models.priority import Priority
 from app.models.user import User
 from app.repositories.category import CategoryRepository
 from app.repositories.company import CompanyRepository
 from app.repositories.department import DepartmentRepository
+from app.repositories.inventory_category import InventoryCategoryRepository
 from app.repositories.location import LocationRepository
 from app.repositories.priority import PriorityRepository
 from app.repositories.role import RoleRepository
@@ -45,12 +47,25 @@ _STARTER_CATEGORY_NAMES = ["Hardware", "Software", "Network", "Account Access", 
 _STARTER_LOCATION_TITLE = "Head Office"
 _STARTER_DEPARTMENT_TITLE = "General"
 
-# Inventory categories are part of the same planned starter-data set (see
-# the Company/SaaS architecture plan's Milestone 5 section), but the
-# inventory_categories table doesn't exist yet - it arrives with Milestone
-# 10 (Inventory core). Seeding it prematurely here would mean building
-# throwaway inventory models ahead of schedule; deferred, see
-# docs/TECH_DEBT.md.
+# Same starter set the Inventory ERD's §03 specifies - now that
+# inventory_categories exists (Milestone 10, Phase 10.1), every newly
+# registered company is seeded with it immediately, same as every other
+# starter list above. Companies registered before this phase existed are
+# backfilled separately by a one-time, idempotent data migration (see
+# alembic/versions/ - "backfill inventory categories for existing companies").
+_STARTER_INVENTORY_CATEGORY_NAMES = [
+    "Laptop",
+    "Desktop",
+    "Monitor",
+    "Printer",
+    "Keyboard",
+    "Mouse",
+    "Dock",
+    "Phone",
+    "Network Equipment",
+    "Cable",
+    "Other",
+]
 
 
 class CompanyCodeConflictError(Exception):
@@ -107,6 +122,9 @@ class CompanyService:
         category_repository_factory: Callable[[int], CategoryRepository] | None = None,
         location_repository_factory: Callable[[int], LocationRepository] | None = None,
         department_repository_factory: Callable[[int], DepartmentRepository] | None = None,
+        inventory_category_repository_factory: (
+            Callable[[int], InventoryCategoryRepository] | None
+        ) = None,
     ) -> None:
         self._db = db
         self._company_repository = company_repository or CompanyRepository(db)
@@ -130,6 +148,9 @@ class CompanyService:
         )
         self._department_repository_factory = department_repository_factory or (
             lambda company_id: DepartmentRepository(db, company_id)
+        )
+        self._inventory_category_repository_factory = inventory_category_repository_factory or (
+            lambda company_id: InventoryCategoryRepository(db, company_id)
         )
 
     def register_company(self, payload: CompanyRegisterRequest) -> User:
@@ -308,3 +329,9 @@ class CompanyService:
         self._department_repository_factory(company_id).create(
             Department(company_id=company_id, title=_STARTER_DEPARTMENT_TITLE)
         )
+
+        inventory_category_repository = self._inventory_category_repository_factory(company_id)
+        for name in _STARTER_INVENTORY_CATEGORY_NAMES:
+            inventory_category_repository.create(
+                InventoryCategory(company_id=company_id, name=name, is_active=True)
+            )
