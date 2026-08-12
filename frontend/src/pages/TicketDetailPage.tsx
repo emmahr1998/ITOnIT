@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ChevronLeft } from "lucide-react";
+import { useAuth } from "../auth/useAuth";
 import { fetchTicket } from "../api/tickets";
 import { getApiErrorMessage } from "../api/client";
 import { LoadingSpinner } from "../components/common/LoadingSpinner";
@@ -8,10 +9,16 @@ import { ErrorMessage } from "../components/common/ErrorMessage";
 import { CommentSection } from "../components/tickets/CommentSection";
 import { AttachmentSection } from "../components/tickets/AttachmentSection";
 import { HistorySection } from "../components/tickets/HistorySection";
+import { TicketInventorySection } from "../components/tickets/TicketInventorySection";
 import { TicketSidebar } from "../components/tickets/TicketSidebar";
 import type { Ticket } from "../types/ticket";
 import { ticketAgeDays } from "../utils/ticketAge";
 import styles from "./TicketDetailPage.module.css";
+
+// Employee must never see inventory management inside tickets, even on
+// their own ticket - matches the backend's own role gate on
+// /tickets/{id}/inventory (see routes/tickets.py's _INVENTORY_ROLES).
+const INVENTORY_SECTION_ROLES = new Set(["Technician", "Company Administrator"]);
 
 function ageLabel(ticket: Ticket): string {
   const days = ticketAgeDays(ticket);
@@ -23,6 +30,8 @@ function ageLabel(ticket: Ticket): string {
 
 export function TicketDetailPage() {
   const { ticketId } = useParams<{ ticketId: string }>();
+  const { user } = useAuth();
+  const canSeeInventory = !!user && INVENTORY_SECTION_ROLES.has(user.role);
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +84,7 @@ export function TicketDetailPage() {
             <p className={styles.description}>{ticket.description}</p>
           </div>
 
+          {canSeeInventory && <TicketInventorySection ticketId={ticket.id} />}
           <CommentSection ticketId={ticket.id} />
           <AttachmentSection ticketId={ticket.id} />
           <HistorySection ticketId={ticket.id} />

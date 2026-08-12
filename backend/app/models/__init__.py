@@ -8,6 +8,7 @@ from app.models.enums import (
     InventoryCondition,
     InventoryStatus,
     InventoryTrackingType,
+    TicketInventoryUsageStatus,
     TicketStatus,
 )
 from app.models.inventory_category import InventoryCategory
@@ -17,6 +18,7 @@ from app.models.priority import Priority
 from app.models.role import Role
 from app.models.ticket import Ticket
 from app.models.ticket_history import TicketHistory
+from app.models.ticket_inventory_usage import TicketInventoryUsage
 from app.models.user import User
 
 __all__ = [
@@ -38,4 +40,6 @@ __all__ = [
     "InventoryTrackingType",
     "InventoryStatus",
     "InventoryCondition",
+    "TicketInventoryUsage",
+    "TicketInventoryUsageStatus",
 ]

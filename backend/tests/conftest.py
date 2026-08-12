@@ -20,6 +20,7 @@ from app.dependencies.inventory_item import get_inventory_item_service
 from app.dependencies.location import get_location_service
 from app.dependencies.priority import get_priority_service
 from app.dependencies.ticket import get_ticket_service
+from app.dependencies.ticket_inventory import get_ticket_inventory_service
 from app.dependencies.user import get_user_service
 from app.main import app
 from app.models.attachment import Attachment
@@ -40,6 +41,7 @@ from app.models.priority import Priority
 from app.models.role import Role
 from app.models.ticket import Ticket
 from app.models.ticket_history import TicketHistory
+from app.models.ticket_inventory_usage import TicketInventoryUsage
 from app.models.user import User
 from app.services.attachment_service import AttachmentService
 from app.services.auth_service import AuthService
@@ -52,6 +54,7 @@ from app.services.inventory_category_service import InventoryCategoryService
 from app.services.inventory_item_service import InventoryItemService
 from app.services.location_service import LocationService
 from app.services.priority_service import PriorityService
+from app.services.ticket_inventory_service import TicketInventoryService
 from app.services.ticket_service import TicketService
 from app.services.user_service import UserService
 
@@ -534,6 +537,61 @@ class FakeInventoryItemRepository:
         obj.updated_at = datetime.now(timezone.utc)
         self._by_id[obj.id] = obj
         return obj
+
+
+class FakeTicketInventoryUsageRepository:
+    """In-memory stand-in for TicketInventoryUsageRepository. Same rationale
+    as FakeCommentRepository - starts empty, tests create whatever rows they
+    need through the API (reserve/consume) rather than pre-seeded fixtures."""
+
+    def __init__(
+        self, usages: list[TicketInventoryUsage] | None = None, company_id: int | None = None
+    ) -> None:
+        self._by_id = {u.id: u for u in (usages or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+        self.company_id = company_id
+
+    def _in_scope(self, usage: TicketInventoryUsage) -> bool:
+        return self.company_id is None or usage.company_id == self.company_id
+
+    def get_by_id(self, id_: int) -> TicketInventoryUsage | None:
+        usage = self._by_id.get(id_)
+        return usage if usage is not None and self._in_scope(usage) else None
+
+    def list_for_ticket(self, ticket_id: int) -> list[TicketInventoryUsage]:
+        return sorted(
+            (u for u in self._by_id.values() if u.ticket_id == ticket_id and self._in_scope(u)),
+            key=lambda u: u.id,
+        )
+
+    def get_existing(self, ticket_id: int, inventory_item_id: int) -> TicketInventoryUsage | None:
+        return next(
+            (
+                u
+                for u in self._by_id.values()
+                if u.ticket_id == ticket_id
+                and u.inventory_item_id == inventory_item_id
+                and self._in_scope(u)
+            ),
+            None,
+        )
+
+    def create(self, obj: TicketInventoryUsage) -> TicketInventoryUsage:
+        obj.id = self._next_id
+        self._next_id += 1
+        now = datetime.now(timezone.utc)
+        obj.created_at = now
+        obj.updated_at = now
+        self._by_id[obj.id] = obj
+        return obj
+
+    def update(self, obj: TicketInventoryUsage) -> TicketInventoryUsage:
+        obj.updated_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
+
+    def delete(self, obj: TicketInventoryUsage) -> None:
+        self._by_id.pop(obj.id, None)
 
 
 class FakeDepartmentRepository:
@@ -1700,6 +1758,13 @@ def ticket_repository(
 
 
 @pytest.fixture
+def ticket_inventory_usage_repository() -> FakeTicketInventoryUsageRepository:
+    """Starts empty - tests create rows via the reserve endpoint rather than
+    pre-seeded fixtures, same rationale as inventory_item_repository."""
+    return FakeTicketInventoryUsageRepository()
+
+
+@pytest.fixture
 def comment_repository(
     employee_comment: Comment, assigned_ticket_comment: Comment, company_b_comment: Comment
 ) -> FakeCommentRepository:
@@ -1752,6 +1817,7 @@ def client(
     inventory_category_repository: FakeInventoryCategoryRepository,
     inventory_item_repository: FakeInventoryItemRepository,
     ticket_repository: FakeTicketRepository,
+    ticket_inventory_usage_repository: FakeTicketInventoryUsageRepository,
     comment_repository: FakeCommentRepository,
     history_repository: FakeHistoryRepository,
     attachment_repository: FakeAttachmentRepository,
@@ -1884,6 +1950,23 @@ def client(
             inventory_category_repository_factory=_inventory_category_repo,
         )
 
+    def _make_ticket_inventory_service(company_id: int) -> TicketInventoryService:
+        ticket_inventory_usage_repository.company_id = company_id
+        inventory_item_repository.company_id = company_id
+        ticket_repository.company_id = company_id
+        return TicketInventoryService(
+            db=FakeSession(),
+            company_id=company_id,
+            usage_repository=ticket_inventory_usage_repository,
+            item_repository=inventory_item_repository,
+            ticket_repository=ticket_repository,
+        )
+
+    def _ticket_inventory_service(
+        company_id: int = Depends(get_current_company_id),
+    ) -> TicketInventoryService:
+        return _make_ticket_inventory_service(company_id)
+
     def _ticket_service(company_id: int = Depends(get_current_company_id)) -> TicketService:
         ticket_repository.company_id = company_id
         category_repository.company_id = company_id
@@ -1899,6 +1982,7 @@ def client(
             user_repository=user_repository.scoped(company_id),
             history_service=_make_history_service(company_id),
             storage_service=storage_service,
+            ticket_inventory_service=_make_ticket_inventory_service(company_id),
         )
 
     def _comment_service(company_id: int = Depends(get_current_company_id)) -> CommentService:
@@ -1943,6 +2027,7 @@ def client(
     app.dependency_overrides[get_inventory_item_service] = _inventory_item_service
     app.dependency_overrides[get_user_service] = _user_service
     app.dependency_overrides[get_ticket_service] = _ticket_service
+    app.dependency_overrides[get_ticket_inventory_service] = _ticket_inventory_service
     app.dependency_overrides[get_comment_service] = _comment_service
     app.dependency_overrides[get_history_service] = _history_service
     app.dependency_overrides[get_attachment_service] = _attachment_service

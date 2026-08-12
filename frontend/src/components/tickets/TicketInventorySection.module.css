@@ -1,0 +1,56 @@
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.count {
+  background: var(--color-badge-gray-bg);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  padding: 0.0625rem var(--space-2);
+  border-radius: var(--radius-full);
+}
+
+.tableWrap {
+  margin-top: var(--space-3);
+}
+
+.mono {
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+}
+
+.numCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.badgeReserved,
+.badgeConsumed {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  padding: 0.125rem var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.badgeReserved {
+  background: var(--color-badge-blue-bg);
+  color: var(--color-badge-blue-text);
+}
+
+.badgeConsumed {
+  background: var(--color-badge-green-bg);
+  color: var(--color-badge-green-text);
+}

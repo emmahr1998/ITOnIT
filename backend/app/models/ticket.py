@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from app.models.location import Location
     from app.models.priority import Priority
     from app.models.ticket_history import TicketHistory
+    from app.models.ticket_inventory_usage import TicketInventoryUsage
     from app.models.user import User
 
 
@@ -80,5 +81,8 @@ class Ticket(TimestampMixin, Base):
         back_populates="ticket", cascade="all, delete-orphan"
     )
     history: Mapped[list["TicketHistory"]] = relationship(
+        back_populates="ticket", cascade="all, delete-orphan"
+    )
+    inventory_usages: Mapped[list["TicketInventoryUsage"]] = relationship(
         back_populates="ticket", cascade="all, delete-orphan"
     )
