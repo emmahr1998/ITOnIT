@@ -28,6 +28,10 @@ from app.dependencies.ticket import (
     get_ticket_service,
     get_viewable_ticket,
 )
+from app.dependencies.ticket_inventory import (
+    get_ticket_inventory_service,
+    get_ticket_inventory_usage_repository,
+)
 from app.dependencies.user import get_user_service
 
 __all__ = [
@@ -60,6 +64,8 @@ __all__ = [
     "get_ticket_repository",
     "get_ticket_service",
     "get_viewable_ticket",
+    "get_ticket_inventory_service",
+    "get_ticket_inventory_usage_repository",
     "get_attachment_repository",
     "get_attachment_service",
 ]

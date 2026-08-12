@@ -49,3 +49,22 @@ class InventoryCondition(str, enum.Enum):
     FAIR = "FAIR"
     DAMAGED = "DAMAGED"
     BROKEN = "BROKEN"
+
+
+class TicketInventoryUsageStatus(str, enum.Enum):
+    """The current relationship between a ticket and an inventory item.
+
+    This is NOT an audit trail (that's InventoryTransaction, Milestone 12) -
+    a TicketInventoryUsage row only exists while it is true, and is deleted
+    the moment it stops being true:
+
+    - RESERVED: the item/quantity is held against this ticket but not yet
+      used. Reversible via "release", which deletes the row.
+    - CONSUMED: the item/quantity has actually been used to resolve this
+      ticket (stock decremented / serialized item marked in use).
+      Reversible only via the explicit "remove" (undo) action, which is
+      restricted to Company Administrator - see TicketInventoryService.
+    """
+
+    RESERVED = "RESERVED"
+    CONSUMED = "CONSUMED"

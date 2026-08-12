@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.dependencies import (
     get_comment_service,
     get_history_service,
+    get_ticket_inventory_service,
     get_ticket_service,
     get_viewable_ticket,
     require_roles,
@@ -20,12 +21,27 @@ from app.schemas.ticket import (
     TicketResponse,
     TicketStatusUpdate,
 )
+from app.schemas.ticket_inventory_usage import TicketInventoryReserve, TicketInventoryUsageResponse
 from app.services.comment_service import (
     CommentNotFoundError,
     CommentPermissionError,
     CommentService,
 )
 from app.services.history_service import HistoryService
+from app.services.ticket_inventory_service import (
+    TicketInventoryCategoryInactiveError,
+    TicketInventoryDuplicateReservationError,
+    TicketInventoryInsufficientStockError,
+    TicketInventoryItemNotFoundError,
+    TicketInventoryItemRetiredError,
+    TicketInventoryItemUnavailableError,
+    TicketInventoryPermissionError,
+    TicketInventoryService,
+    TicketInventoryStateError,
+    TicketInventoryTicketNotFoundError,
+    TicketInventoryUsageNotFoundError,
+    TicketInventoryValidationError,
+)
 from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidTechnicianAssignmentError,
@@ -50,6 +66,14 @@ _VIEW_ROLES = ("Employee", "Technician", "Company Administrator")
 _DELETE_ROLES = ("Company Administrator",)
 _ASSIGN_ROLES = ("Company Administrator",)
 _STATUS_ROLES = ("Technician", "Company Administrator")
+# Employee must never see inventory management inside tickets - deliberately
+# NOT built on get_viewable_ticket (which would let an Employee reach their
+# own ticket's inventory); this role gate applies first, then
+# TicketInventoryService enforces ticket ownership for Technician.
+_INVENTORY_ROLES = ("Technician", "Company Administrator")
+# Undoing a CONSUMED row is a stock-correcting action, more privileged than
+# reserve/release/consume - Company Administrator only.
+_INVENTORY_REMOVE_ROLES = ("Company Administrator",)
 
 
 @router.get("/{ticket_id}", response_model=TicketResponse)
@@ -222,6 +246,167 @@ def get_ticket_history(
 ) -> list[TicketHistoryResponse]:
     entries = history_service.list_for_ticket(ticket.id)
     return [TicketHistoryResponse.model_validate(entry) for entry in entries]
+
+
+# ---------------------------------------------------------------------------
+# Inventory - nested under a ticket. Unlike comments/history, this does NOT
+# use get_viewable_ticket: Employee must never see inventory management
+# inside tickets at all, even on their own ticket, so the role gate below
+# (_INVENTORY_ROLES/_INVENTORY_REMOVE_ROLES) runs first and excludes
+# Employee outright; TicketInventoryService then enforces ticket ownership
+# for Technician (must be the assigned technician), same pattern as
+# change_status above.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{ticket_id}/inventory", response_model=DataResponse[list[TicketInventoryUsageResponse]]
+)
+def list_ticket_inventory(
+    ticket_id: int,
+    ticket_inventory_service: TicketInventoryService = Depends(get_ticket_inventory_service),
+    current_user: User = Depends(require_roles(*_INVENTORY_ROLES)),
+) -> DataResponse[list[TicketInventoryUsageResponse]]:
+    try:
+        usages = ticket_inventory_service.list_for_ticket(current_user, ticket_id)
+    except TicketInventoryTicketNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from exc
+    except TicketInventoryPermissionError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "You do not have access to this ticket"
+        ) from exc
+    return DataResponse(
+        data=[TicketInventoryUsageResponse.model_validate(usage) for usage in usages],
+        msg=f"Fetched {len(usages)} inventory items",
+    )
+
+
+@router.post(
+    "/{ticket_id}/inventory",
+    response_model=DataResponse[TicketInventoryUsageResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+def reserve_ticket_inventory(
+    ticket_id: int,
+    payload: TicketInventoryReserve,
+    ticket_inventory_service: TicketInventoryService = Depends(get_ticket_inventory_service),
+    current_user: User = Depends(require_roles(*_INVENTORY_ROLES)),
+) -> DataResponse[TicketInventoryUsageResponse]:
+    try:
+        usage = ticket_inventory_service.reserve(
+            current_user, ticket_id, payload.inventory_item_id, payload.quantity
+        )
+    except TicketInventoryTicketNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from exc
+    except TicketInventoryPermissionError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "You do not have access to this ticket"
+        ) from exc
+    except TicketInventoryItemNotFoundError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Inventory item not found") from exc
+    except TicketInventoryCategoryInactiveError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This item's inventory category has been deactivated",
+        ) from exc
+    except TicketInventoryItemRetiredError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "A retired inventory item cannot be reserved"
+        ) from exc
+    except TicketInventoryItemUnavailableError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This item is not available (already reserved or in use)"
+        ) from exc
+    except TicketInventoryDuplicateReservationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This item is already attached to this ticket"
+        ) from exc
+    except TicketInventoryInsufficientStockError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Not enough stock available to reserve this quantity"
+        ) from exc
+    except TicketInventoryValidationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, exc.message) from exc
+    return DataResponse(
+        data=TicketInventoryUsageResponse.model_validate(usage),
+        msg="Inventory item reserved successfully",
+    )
+
+
+@router.patch(
+    "/{ticket_id}/inventory/{usage_id}/consume",
+    response_model=DataResponse[TicketInventoryUsageResponse],
+)
+def consume_ticket_inventory(
+    ticket_id: int,
+    usage_id: int,
+    ticket_inventory_service: TicketInventoryService = Depends(get_ticket_inventory_service),
+    current_user: User = Depends(require_roles(*_INVENTORY_ROLES)),
+) -> DataResponse[TicketInventoryUsageResponse]:
+    try:
+        usage = ticket_inventory_service.consume(current_user, ticket_id, usage_id)
+    except TicketInventoryTicketNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from exc
+    except TicketInventoryPermissionError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "You do not have access to this ticket"
+        ) from exc
+    except TicketInventoryUsageNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory usage not found") from exc
+    except TicketInventoryStateError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, exc.message) from exc
+    except TicketInventoryInsufficientStockError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Not enough stock available to consume this quantity"
+        ) from exc
+    return DataResponse(
+        data=TicketInventoryUsageResponse.model_validate(usage),
+        msg="Inventory item consumed successfully",
+    )
+
+
+@router.patch("/{ticket_id}/inventory/{usage_id}/release", status_code=status.HTTP_204_NO_CONTENT)
+def release_ticket_inventory(
+    ticket_id: int,
+    usage_id: int,
+    ticket_inventory_service: TicketInventoryService = Depends(get_ticket_inventory_service),
+    current_user: User = Depends(require_roles(*_INVENTORY_ROLES)),
+) -> None:
+    try:
+        ticket_inventory_service.release(current_user, ticket_id, usage_id)
+    except TicketInventoryTicketNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from exc
+    except TicketInventoryPermissionError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "You do not have access to this ticket"
+        ) from exc
+    except TicketInventoryUsageNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory usage not found") from exc
+    except TicketInventoryStateError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, exc.message) from exc
+
+
+@router.delete("/{ticket_id}/inventory/{usage_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_ticket_inventory(
+    ticket_id: int,
+    usage_id: int,
+    ticket_inventory_service: TicketInventoryService = Depends(get_ticket_inventory_service),
+    _current_user: User = Depends(require_roles(*_INVENTORY_REMOVE_ROLES)),
+) -> None:
+    """Undo a CONSUMED usage row - restores the item's stock/status. See
+    TicketInventoryService.remove."""
+    try:
+        ticket_inventory_service.remove(_current_user, ticket_id, usage_id)
+    except TicketInventoryTicketNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from exc
+    except TicketInventoryPermissionError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "You do not have access to this ticket"
+        ) from exc
+    except TicketInventoryUsageNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory usage not found") from exc
+    except TicketInventoryStateError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, exc.message) from exc
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ from app.repositories.user import UserRepository
 from app.schemas.ticket import TicketNewCreate, TicketPatch
 from app.services.history_service import HistoryService
 from app.services.storage_service import StorageService
+from app.services.ticket_inventory_service import TicketInventoryService
 
 TECHNICIAN_ROLE_NAME = "Technician"
 _MANAGE_ROLE_NAMES = ("Company Administrator",)
@@ -113,6 +114,7 @@ class TicketService:
         user_repository: UserRepository | None = None,
         history_service: HistoryService | None = None,
         storage_service: StorageService | None = None,
+        ticket_inventory_service: TicketInventoryService | None = None,
     ) -> None:
         self._db = db
         self._company_id = company_id
@@ -142,6 +144,11 @@ class TicketService:
         )
         self._storage_service = (
             storage_service if storage_service is not None else StorageService()
+        )
+        self._ticket_inventory_service = (
+            ticket_inventory_service
+            if ticket_inventory_service is not None
+            else TicketInventoryService(db, company_id)
         )
 
     # ---- ownership -----------------------------------------------------
@@ -390,6 +397,12 @@ class TicketService:
         ticket = self._ticket_repository.get_by_id(ticket_id)
         if ticket is None:
             raise TicketNotFoundError
+
+        # Revert any RESERVED/CONSUMED inventory attached to this ticket
+        # first, so deleting it never leaves an item permanently stuck
+        # RESERVED/IN_USE with no owning ticket - see
+        # TicketInventoryService.release_all_for_ticket.
+        self._ticket_inventory_service.release_all_for_ticket(ticket.id)
 
         # Capture file paths before the cascade delete removes the
         # attachment rows. The DB delete commits first, then physical files
