@@ -392,7 +392,7 @@ class TicketService:
         self._db.commit()
         return ticket
 
-    def delete_ticket(self, ticket_id: int) -> None:
+    def delete_ticket(self, ticket_id: int, current_user: User) -> None:
         # Role gate (Company Administrator only) is enforced at the route.
         ticket = self._ticket_repository.get_by_id(ticket_id)
         if ticket is None:
@@ -401,8 +401,11 @@ class TicketService:
         # Revert any RESERVED/CONSUMED inventory attached to this ticket
         # first, so deleting it never leaves an item permanently stuck
         # RESERVED/IN_USE with no owning ticket - see
-        # TicketInventoryService.release_all_for_ticket.
-        self._ticket_inventory_service.release_all_for_ticket(ticket.id)
+        # TicketInventoryService.release_all_for_ticket. current_user (the
+        # Company Administrator deleting the ticket) is who Phase 12.1's
+        # InventoryTransaction rows for this cleanup attribute the action
+        # to - not whoever originally reserved/consumed each item.
+        self._ticket_inventory_service.release_all_for_ticket(ticket, current_user)
 
         # Capture file paths before the cascade delete removes the
         # attachment rows. The DB delete commits first, then physical files

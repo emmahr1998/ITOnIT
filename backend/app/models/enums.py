@@ -68,3 +68,34 @@ class TicketInventoryUsageStatus(str, enum.Enum):
 
     RESERVED = "RESERVED"
     CONSUMED = "CONSUMED"
+
+
+class InventoryTransactionType(str, enum.Enum):
+    """The kind of event an InventoryTransaction row records - see that
+    model's docstring for the full audit-trail design.
+
+    CREATED/RESERVED/RELEASED/CONSUMED/CONSUME_UNDONE/STOCK_ADJUSTED/
+    STATUS_CHANGED/HOLDER_CHANGED/LOCATION_CHANGED each carry their own
+    precise, workflow-significant meaning. EDITED is the generic catch-all
+    for every other simple field edit (name, manufacturer, model,
+    serial_number, asset_tag, inventory_category_id, condition,
+    minimum_stock, purchase_date, warranty_expiration, supplier,
+    purchase_cost, invoice_number, image_path, notes) - one row per
+    changed field, using field_name/old_value/new_value, the same
+    approach TicketHistory already uses for ticket field edits.
+
+    Deliberately no separate RETIRED type: retiring an asset is just a
+    status change to RETIRED, captured by STATUS_CHANGED like any other
+    manual status change - a dedicated type would be redundant.
+    """
+
+    CREATED = "CREATED"
+    EDITED = "EDITED"
+    STOCK_ADJUSTED = "STOCK_ADJUSTED"
+    STATUS_CHANGED = "STATUS_CHANGED"
+    HOLDER_CHANGED = "HOLDER_CHANGED"
+    LOCATION_CHANGED = "LOCATION_CHANGED"
+    RESERVED = "RESERVED"
+    RELEASED = "RELEASED"
+    CONSUMED = "CONSUMED"
+    CONSUME_UNDONE = "CONSUME_UNDONE"

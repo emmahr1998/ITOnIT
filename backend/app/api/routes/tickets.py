@@ -121,10 +121,10 @@ def patch_ticket(
 def delete_ticket(
     ticket_id: int,
     ticket_service: TicketService = Depends(get_ticket_service),
-    _current_user: User = Depends(require_roles(*_DELETE_ROLES)),
+    current_user: User = Depends(require_roles(*_DELETE_ROLES)),
 ) -> None:
     try:
-        ticket_service.delete_ticket(ticket_id)
+        ticket_service.delete_ticket(ticket_id, current_user)
     except TicketNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from exc
 

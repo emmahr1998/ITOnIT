@@ -1,9 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.dependencies import get_inventory_item_service, require_roles
+from app.dependencies import (
+    get_inventory_item_service,
+    get_inventory_transaction_service,
+    require_roles,
+)
 from app.models.enums import InventoryCondition, InventoryStatus, InventoryTrackingType
 from app.models.user import User
 from app.schemas.inventory_item import InventoryItemCreate, InventoryItemResponse, InventoryItemUpdate
+from app.schemas.inventory_transaction import InventoryTransactionResponse
 from app.schemas.response import DataResponse
 from app.services.inventory_item_service import (
     InventoryCategoryInactiveError,
@@ -15,6 +20,7 @@ from app.services.inventory_item_service import (
     InventoryItemService,
     InventoryItemValidationError,
 )
+from app.services.inventory_transaction_service import InventoryTransactionService
 
 router = APIRouter(prefix="/inventory-items", tags=["Inventory Items"])
 
@@ -87,10 +93,10 @@ def get_inventory_item(
 def create_inventory_item(
     payload: InventoryItemCreate,
     inventory_item_service: InventoryItemService = Depends(get_inventory_item_service),
-    _current_user: User = Depends(require_roles(*_MANAGE_ROLES)),
+    current_user: User = Depends(require_roles(*_MANAGE_ROLES)),
 ) -> DataResponse[InventoryItemResponse]:
     try:
-        item = inventory_item_service.create_item(payload)
+        item = inventory_item_service.create_item(payload, current_user)
     except InventoryItemAssetTagConflictError as exc:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "An inventory item with this asset tag already exists"
@@ -118,10 +124,10 @@ def update_inventory_item(
     item_id: int,
     payload: InventoryItemUpdate,
     inventory_item_service: InventoryItemService = Depends(get_inventory_item_service),
-    _current_user: User = Depends(require_roles(*_MANAGE_ROLES)),
+    current_user: User = Depends(require_roles(*_MANAGE_ROLES)),
 ) -> DataResponse[InventoryItemResponse]:
     try:
-        item = inventory_item_service.update_item(item_id, payload)
+        item = inventory_item_service.update_item(item_id, payload, current_user)
     except InventoryItemNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory item not found") from exc
     except InventoryItemAssetTagConflictError as exc:
@@ -143,4 +149,41 @@ def update_inventory_item(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, exc.message) from exc
     return DataResponse(
         data=InventoryItemResponse.model_validate(item), msg="Inventory item updated successfully"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Transactions - the permanent, append-only audit trail for this item
+# (Phase 12.1). Read-only: no POST/PATCH/DELETE exists for this resource at
+# all, since every row is written internally as a side effect of the
+# create/update calls above and of TicketInventoryService's reserve/
+# release/consume/remove. Same view roles as the item itself - Technician
+# already has full read access to every item's live state, so restricting
+# history more tightly than that would be an inconsistent, arbitrary carve-out.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{item_id}/transactions", response_model=DataResponse[list[InventoryTransactionResponse]]
+)
+def list_inventory_item_transactions(
+    item_id: int,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    inventory_item_service: InventoryItemService = Depends(get_inventory_item_service),
+    inventory_transaction_service: InventoryTransactionService = Depends(
+        get_inventory_transaction_service
+    ),
+    _current_user: User = Depends(require_roles(*_VIEW_ROLES)),
+) -> DataResponse[list[InventoryTransactionResponse]]:
+    try:
+        inventory_item_service.get_item(item_id)
+    except InventoryItemNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventory item not found") from exc
+    transactions, total = inventory_transaction_service.list_for_item(
+        item_id, skip=skip, limit=limit
+    )
+    return DataResponse(
+        data=[InventoryTransactionResponse.model_validate(t) for t in transactions],
+        msg=f"Fetched {len(transactions)} of {total} inventory transactions",
     )
