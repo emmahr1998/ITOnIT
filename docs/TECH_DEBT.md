@@ -281,3 +281,60 @@ e.g. by having `TicketService.delete_ticket` pass its own session/deferred
 commit into `release_all_for_ticket` (or restructuring so both operations
 share a single `commit()` at the very end of `delete_ticket`) rather than
 `release_all_for_ticket` committing independently.
+
+### 2. SQL Server text columns are non-Unicode (`varchar`/`text`) - non-ASCII characters silently corrupt to `?`
+
+**Found:** during live verification of the Inventory Transaction History
+frontend (2026-08-20), while checking that `TicketInventoryService.consume`'s
+auto-generated note for a SERIALIZED item -
+`f"Status RESERVED→IN_USE; holder assigned to {...}"` - rendered correctly
+in the new History modal.
+
+**What's wrong:** the note displayed as `Status RESERVED?IN_USE; ...` - the
+`→` (U+2192) had become a literal `?`. Traced end to end, not a display
+bug: the source file itself is correctly UTF-8 on disk (confirmed via raw
+byte inspection - `\xe2\x86\x92` at that location), and querying the
+resulting row directly from the database via SQLAlchemy (bypassing the API
+entirely) shows the stored value already contains `?`, not `→` - the
+corruption happens on write to SQL Server, not in transit or in the
+frontend. Root cause: `notes` (and `field_name`, `old_value`, `new_value`,
+`transaction_type`) on `inventory_transactions` are all SQL Server
+`varchar` (confirmed via `INFORMATION_SCHEMA.COLUMNS`), not `nvarchar` -
+SQLAlchemy's generic `sa.String()`/`sa.Text()` map to the mssql dialect's
+non-Unicode types by default. A schema-wide check
+(`INFORMATION_SCHEMA.COLUMNS WHERE DATA_TYPE IN ('varchar','text')`)
+returns **53 columns across the entire database** - `comments.content`,
+`attachments.original_filename`, `companies.name`, and effectively every
+user-visible text column in the schema, not something specific to
+`inventory_transactions` or this milestone. Any of those columns has
+always been able to silently replace a non-ASCII character (accented
+letters, curly quotes, em dashes, emoji, non-Latin scripts, and this
+arrow) with `?` on write.
+
+**Why deferred:** this is a pre-existing, schema-wide condition that
+happened to surface via one transaction's generated note during this
+milestone's manual testing - it predates Phase 12.1 and the History
+frontend entirely and isn't caused by either. Fixing it properly means
+auditing all 53 columns, deciding which are genuinely user-visible/
+non-ASCII-relevant versus system-internal (e.g. `alembic_version.version_num`
+doesn't need it), and a dedicated Alembic migration to `ALTER COLUMN` the
+relevant ones from `varchar`/`text` to `nvarchar`/`nvarchar(max)` - a
+cross-cutting schema change well outside this milestone's explicit
+"frontend only, no backend/schema changes" scope. Not fixed here per
+direct instruction.
+
+**Not recoverable for existing data:** any row that already had a
+non-ASCII character written to one of these columns has had that
+character permanently replaced with `?` - the original byte is gone from
+the database, not just hidden. A future fix stops new corruption; it
+cannot restore what a `varchar` column already overwrote.
+
+**Future improvement (not implemented, not scheduled to a milestone yet):**
+a dedicated migration/audit pass - not bundled into any other feature -
+that (1) enumerates every `varchar`/`text` column via
+`INFORMATION_SCHEMA.COLUMNS`, (2) evaluates each for whether it should be
+Unicode-capable (`NVARCHAR`/`NVARCHAR(MAX)`) given what it stores, (3)
+updates the corresponding SQLAlchemy column types so future migrations
+default to Unicode-safe types on this dialect, and (4) documents, for
+anyone debugging historical data, that a `?` where a special character
+would be expected may indicate this bug rather than genuine user input.

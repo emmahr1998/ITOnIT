@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Search, X } from "lucide-react";
+import { History, Pencil, Plus, Search, X } from "lucide-react";
 import { useAuth } from "../../auth/useAuth";
 import { fetchInventoryItems } from "../../api/inventoryItems";
 import { fetchInventoryCategories } from "../../api/inventoryCategories";
@@ -19,6 +19,7 @@ import {
 } from "../../components/common/InventoryBadges";
 import { isLowStock, warrantyState } from "../../utils/inventoryStatus";
 import { InventoryItemFormModal } from "../../components/admin/InventoryItemFormModal";
+import { InventoryHistoryModal } from "../../components/admin/InventoryHistoryModal";
 import {
   INVENTORY_CONDITIONS,
   INVENTORY_SORT_OPTIONS,
@@ -86,6 +87,7 @@ export function InventoryPage() {
 
   const [formModalMode, setFormModalMode] = useState<"create" | "edit" | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
 
   const hasActiveFilters = Boolean(
     search ||
@@ -483,7 +485,7 @@ export function InventoryPage() {
                   <th>Stock</th>
                   <th>Reserved</th>
                   <th>Minimum Stock</th>
-                  {canManage && <th aria-label="Actions" />}
+                  <th aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -524,8 +526,15 @@ export function InventoryPage() {
                       {item.minimum_stock ?? "—"}
                       {isLowStock(item) && <LowStockBadge />}
                     </td>
-                    {canManage && (
-                      <td className={styles.actions}>
+                    <td className={styles.actions}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setHistoryItem(item)}
+                      >
+                        <History size={14} /> History
+                      </button>
+                      {canManage && (
                         <button
                           type="button"
                           className="btn btn-ghost btn-sm"
@@ -536,8 +545,8 @@ export function InventoryPage() {
                         >
                           <Pencil size={14} /> Edit
                         </button>
-                      </td>
-                    )}
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -565,6 +574,10 @@ export function InventoryPage() {
           }}
           onSaved={handleSaved}
         />
+      )}
+
+      {historyItem && (
+        <InventoryHistoryModal item={historyItem} onClose={() => setHistoryItem(null)} />
       )}
     </div>
   );

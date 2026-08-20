@@ -4,6 +4,7 @@ import type {
   InventoryTrackingType,
 } from "../../types/inventoryItem";
 import type { WarrantyState } from "../../utils/inventoryStatus";
+import { formatEnumLabel } from "../../utils/formatEnumLabel";
 // Reuses StatusBadge's own CSS module rather than duplicating the badge/
 // color classes - same approach PriorityBadge already takes.
 import styles from "./StatusBadge.module.css";
@@ -15,14 +16,6 @@ const STATUS_STYLE: Record<InventoryStatus, string> = {
   IN_REPAIR: styles.red,
   RETIRED: styles.gray,
 };
-
-function formatEnumLabel(value: string): string {
-  return value
-    .toLowerCase()
-    .split("_")
-    .map((word) => word[0].toUpperCase() + word.slice(1))
-    .join(" ");
-}
 
 export function InventoryStatusBadge({ status }: { status: InventoryStatus }) {
   return (
