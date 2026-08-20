@@ -9,6 +9,7 @@ from app.api.routes import (
     health,
     inventory_categories,
     inventory_items,
+    inventory_transactions,
     locations,
     priorities,
     tickets,
@@ -25,6 +26,7 @@ api_router.include_router(locations.router)
 api_router.include_router(priorities.router)
 api_router.include_router(inventory_categories.router)
 api_router.include_router(inventory_items.router)
+api_router.include_router(inventory_transactions.router)
 api_router.include_router(users.router)
 api_router.include_router(tickets.flat_router)
 api_router.include_router(tickets.router)

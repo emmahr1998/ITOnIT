@@ -17,6 +17,7 @@ from app.dependencies.department import get_department_service
 from app.dependencies.history import get_history_service
 from app.dependencies.inventory_category import get_inventory_category_service
 from app.dependencies.inventory_item import get_inventory_item_service
+from app.dependencies.inventory_transaction import get_inventory_transaction_service
 from app.dependencies.location import get_location_service
 from app.dependencies.priority import get_priority_service
 from app.dependencies.ticket import get_ticket_service
@@ -36,6 +37,7 @@ from app.models.enums import (
 )
 from app.models.inventory_category import InventoryCategory
 from app.models.inventory_item import InventoryItem
+from app.models.inventory_transaction import InventoryTransaction
 from app.models.location import Location
 from app.models.priority import Priority
 from app.models.role import Role
@@ -52,6 +54,7 @@ from app.services.department_service import DepartmentService
 from app.services.history_service import HistoryService
 from app.services.inventory_category_service import InventoryCategoryService
 from app.services.inventory_item_service import InventoryItemService
+from app.services.inventory_transaction_service import InventoryTransactionService
 from app.services.location_service import LocationService
 from app.services.priority_service import PriorityService
 from app.services.ticket_inventory_service import TicketInventoryService
@@ -592,6 +595,95 @@ class FakeTicketInventoryUsageRepository:
 
     def delete(self, obj: TicketInventoryUsage) -> None:
         self._by_id.pop(obj.id, None)
+
+
+class FakeInventoryTransactionRepository:
+    """In-memory stand-in for InventoryTransactionRepository. Same
+    rationale as FakeTicketInventoryUsageRepository - starts empty, tests
+    assert on rows written as a side effect of item/ticket-inventory
+    mutations rather than pre-seeded fixtures. Deliberately has no
+    update()/delete() - mirrors the real repository's append-only
+    contract exactly."""
+
+    def __init__(
+        self, transactions: list[InventoryTransaction] | None = None, company_id: int | None = None
+    ) -> None:
+        self._by_id = {t.id: t for t in (transactions or [])}
+        self._next_id = max(self._by_id, default=0) + 1
+        self.company_id = company_id
+
+    def _in_scope(self, transaction: InventoryTransaction) -> bool:
+        return self.company_id is None or transaction.company_id == self.company_id
+
+    def _filtered(
+        self,
+        *,
+        inventory_item_id: int | None = None,
+        ticket_id: int | None = None,
+        transaction_type=None,
+        performed_by_user_id: int | None = None,
+    ) -> list[InventoryTransaction]:
+        results = [t for t in self._by_id.values() if self._in_scope(t)]
+        if inventory_item_id is not None:
+            results = [t for t in results if t.inventory_item_id == inventory_item_id]
+        if ticket_id is not None:
+            results = [t for t in results if t.ticket_id == ticket_id]
+        if transaction_type is not None:
+            results = [t for t in results if t.transaction_type == transaction_type]
+        if performed_by_user_id is not None:
+            results = [t for t in results if t.performed_by_user_id == performed_by_user_id]
+        return sorted(results, key=lambda t: t.id, reverse=True)
+
+    def list_for_item(
+        self, inventory_item_id: int, *, skip: int = 0, limit: int = 100
+    ) -> list[InventoryTransaction]:
+        results = self._filtered(inventory_item_id=inventory_item_id)
+        return results[skip : skip + limit]
+
+    def count_for_item(self, inventory_item_id: int) -> int:
+        return len(self._filtered(inventory_item_id=inventory_item_id))
+
+    def list_company_transactions(
+        self,
+        *,
+        inventory_item_id: int | None = None,
+        ticket_id: int | None = None,
+        transaction_type=None,
+        performed_by_user_id: int | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> list[InventoryTransaction]:
+        results = self._filtered(
+            inventory_item_id=inventory_item_id,
+            ticket_id=ticket_id,
+            transaction_type=transaction_type,
+            performed_by_user_id=performed_by_user_id,
+        )
+        return results[skip : skip + limit]
+
+    def count_company_transactions(
+        self,
+        *,
+        inventory_item_id: int | None = None,
+        ticket_id: int | None = None,
+        transaction_type=None,
+        performed_by_user_id: int | None = None,
+    ) -> int:
+        return len(
+            self._filtered(
+                inventory_item_id=inventory_item_id,
+                ticket_id=ticket_id,
+                transaction_type=transaction_type,
+                performed_by_user_id=performed_by_user_id,
+            )
+        )
+
+    def create(self, obj: InventoryTransaction) -> InventoryTransaction:
+        obj.id = self._next_id
+        self._next_id += 1
+        obj.created_at = datetime.now(timezone.utc)
+        self._by_id[obj.id] = obj
+        return obj
 
 
 class FakeDepartmentRepository:
@@ -1765,6 +1857,14 @@ def ticket_inventory_usage_repository() -> FakeTicketInventoryUsageRepository:
 
 
 @pytest.fixture
+def inventory_transaction_repository() -> FakeInventoryTransactionRepository:
+    """Starts empty - tests assert on rows written as a side effect of
+    item/ticket-inventory mutations rather than pre-seeded fixtures, same
+    rationale as ticket_inventory_usage_repository."""
+    return FakeInventoryTransactionRepository()
+
+
+@pytest.fixture
 def comment_repository(
     employee_comment: Comment, assigned_ticket_comment: Comment, company_b_comment: Comment
 ) -> FakeCommentRepository:
@@ -1816,6 +1916,7 @@ def client(
     category_repository: FakeCategoryRepository,
     inventory_category_repository: FakeInventoryCategoryRepository,
     inventory_item_repository: FakeInventoryItemRepository,
+    inventory_transaction_repository: FakeInventoryTransactionRepository,
     ticket_repository: FakeTicketRepository,
     ticket_inventory_usage_repository: FakeTicketInventoryUsageRepository,
     comment_repository: FakeCommentRepository,
@@ -1846,6 +1947,19 @@ def client(
         return HistoryService(
             db=FakeSession(), company_id=company_id, history_repository=history_repository
         )
+
+    def _make_inventory_transaction_service(company_id: int) -> InventoryTransactionService:
+        inventory_transaction_repository.company_id = company_id
+        return InventoryTransactionService(
+            db=FakeSession(),
+            company_id=company_id,
+            transaction_repository=inventory_transaction_repository,
+        )
+
+    def _inventory_transaction_service(
+        company_id: int = Depends(get_current_company_id),
+    ) -> InventoryTransactionService:
+        return _make_inventory_transaction_service(company_id)
 
     def _category_service(company_id: int = Depends(get_current_company_id)) -> CategoryService:
         category_repository.company_id = company_id
@@ -1896,6 +2010,7 @@ def client(
             category_repository=inventory_category_repository,
             location_repository=location_repository,
             user_repository=user_repository.scoped(company_id),
+            inventory_transaction_service=_make_inventory_transaction_service(company_id),
         )
 
     def _user_service(company_id: int = Depends(get_current_company_id)) -> UserService:
@@ -1960,6 +2075,8 @@ def client(
             usage_repository=ticket_inventory_usage_repository,
             item_repository=inventory_item_repository,
             ticket_repository=ticket_repository,
+            inventory_transaction_service=_make_inventory_transaction_service(company_id),
+            history_service=_make_history_service(company_id),
         )
 
     def _ticket_inventory_service(
@@ -2025,6 +2142,7 @@ def client(
     app.dependency_overrides[get_location_service] = _location_service
     app.dependency_overrides[get_inventory_category_service] = _inventory_category_service
     app.dependency_overrides[get_inventory_item_service] = _inventory_item_service
+    app.dependency_overrides[get_inventory_transaction_service] = _inventory_transaction_service
     app.dependency_overrides[get_user_service] = _user_service
     app.dependency_overrides[get_ticket_service] = _ticket_service
     app.dependency_overrides[get_ticket_inventory_service] = _ticket_inventory_service

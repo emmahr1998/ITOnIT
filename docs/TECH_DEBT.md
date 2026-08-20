@@ -241,3 +241,43 @@ and role-gated widgets/actions show correctly. No frontend route or UI
 exists yet for System Administrator to log into (that's Milestone 8), so
 it wasn't exercised end-to-end, but the nav/role-keyed lookups no longer
 crash for it either.
+
+## Inventory & Ticket integration (Milestones 11-12)
+
+### 1. Ticket deletion and its inventory cleanup are two separate commits, not one atomic transaction
+
+**Found:** during Milestone 11 (Ticket ↔ Inventory integration); reconfirmed
+during Phase 12.1's final audit (2026-08-12) once `InventoryTransaction`
+rows started riding along on the same commit.
+
+**What's wrong:** `TicketService.delete_ticket` calls
+`TicketInventoryService.release_all_for_ticket` *before* deleting the
+ticket row. `release_all_for_ticket` reverts every attached inventory
+item's RESERVED/CONSUMED state (and, as of Phase 12.1, writes the
+corresponding `InventoryTransaction` audit rows) and commits that as its
+own transaction; `delete_ticket` then deletes the ticket row and commits
+separately, afterward. These are two independent commits, not one atomic
+unit of work.
+
+**Practical consequence:** if the *second* commit (the ticket-row delete)
+were to fail for any reason, the inventory cleanup - including
+`InventoryTransaction` rows whose `notes` say "Ticket IT-... deleted;
+... reverted automatically" - would already be durably committed, even
+though the ticket itself was never actually deleted. The inventory side
+would be left correctly reverted (no stuck RESERVED/IN_USE item), but the
+audit trail would reference a deletion that didn't happen.
+
+**Why deferred:** this is pre-existing Milestone 11 behavior, deliberately
+accepted at the time (see Milestone 11's own completion report) rather
+than something Phase 12.1 introduced. It is not blocking either
+milestone's implementation - the far more common failure mode (the first
+commit failing) already leaves everything correctly rolled back, and nothing
+in Milestones 11 or 12's approved scope required stronger cross-resource
+atomicity than this.
+
+**Future improvement (not implemented, not scheduled to a milestone yet):**
+make ticket deletion and its inventory cleanup one atomic transaction -
+e.g. by having `TicketService.delete_ticket` pass its own session/deferred
+commit into `release_all_for_ticket` (or restructuring so both operations
+share a single `commit()` at the very end of `delete_ticket`) rather than
+`release_all_for_ticket` committing independently.

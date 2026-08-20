@@ -1,7 +1,7 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.enums import InventoryStatus, InventoryTrackingType
+from app.models.enums import InventoryStatus, InventoryTrackingType, InventoryTransactionType
 from app.models.inventory_category import InventoryCategory
 from app.models.inventory_item import InventoryItem
 from app.models.location import Location
@@ -11,6 +11,7 @@ from app.repositories.inventory_item import InventoryItemRepository
 from app.repositories.location import LocationRepository
 from app.repositories.user import UserRepository
 from app.schemas.inventory_item import InventoryItemCreate, InventoryItemUpdate
+from app.services.inventory_transaction_service import InventoryTransactionService
 
 _BULK_ALLOWED_STATUSES = frozenset({InventoryStatus.AVAILABLE, InventoryStatus.RETIRED})
 _SERIALIZED_ALLOWED_RESERVED = frozenset({0, 1})
@@ -79,9 +80,15 @@ class InventoryItemService:
     same as a genuinely nonexistent id - see that class's docstring on why
     that's deliberate).
 
-    No InventoryTransaction rows are written by this service - audit
-    logging is Phase 10.4's job, not this one's (see the approved Phase
-    10.2 scope).
+    Every create/update also records an InventoryTransaction row via
+    InventoryTransactionService (Phase 12.1) - CREATED once per creation,
+    then one row per field actually changed on update, using the
+    dedicated STOCK_ADJUSTED/STATUS_CHANGED/HOLDER_CHANGED/
+    LOCATION_CHANGED types for those specific fields and the generic
+    EDITED type for everything else (see _record_update_transactions).
+    This service is not ticket-related, so it never touches TicketHistory
+    - only TicketInventoryService's reserve/release/consume/remove do
+    that, since those are the actions that affect a ticket.
     """
 
     def __init__(
@@ -92,6 +99,7 @@ class InventoryItemService:
         category_repository: InventoryCategoryRepository | None = None,
         location_repository: LocationRepository | None = None,
         user_repository: UserRepository | None = None,
+        inventory_transaction_service: InventoryTransactionService | None = None,
     ) -> None:
         self._db = db
         self._company_id = company_id
@@ -110,6 +118,11 @@ class InventoryItemService:
         )
         self._user_repository = (
             user_repository if user_repository is not None else UserRepository(db, company_id)
+        )
+        self._inventory_transaction_service = (
+            inventory_transaction_service
+            if inventory_transaction_service is not None
+            else InventoryTransactionService(db, company_id)
         )
 
     # ---- reference lookups ------------------------------------------------
@@ -235,7 +248,7 @@ class InventoryItemService:
 
     # ---- writes ------------------------------------------------------------
 
-    def create_item(self, payload: InventoryItemCreate) -> InventoryItem:
+    def create_item(self, payload: InventoryItemCreate, current_user: User) -> InventoryItem:
         category = self._get_active_category_or_raise(payload.inventory_category_id)
         location = (
             self._get_location_or_raise(payload.current_location_id)
@@ -291,6 +304,16 @@ class InventoryItemService:
 
         try:
             self._item_repository.create(item)
+            self._inventory_transaction_service.record(
+                inventory_item=item,
+                performed_by=current_user,
+                transaction_type=InventoryTransactionType.CREATED,
+                quantity_delta=item.stock_quantity,
+                notes=(
+                    f"Created as {item.tracking_type.value}"
+                    + (f", asset tag {item.asset_tag}" if item.asset_tag else "")
+                ),
+            )
             self._db.commit()
         except IntegrityError as exc:
             # Defense in depth: a concurrent request could pass the
@@ -301,9 +324,37 @@ class InventoryItemService:
             raise InventoryItemAssetTagConflictError from exc
         return item
 
-    def update_item(self, item_id: int, payload: InventoryItemUpdate) -> InventoryItem:
+    def update_item(
+        self, item_id: int, payload: InventoryItemUpdate, current_user: User
+    ) -> InventoryItem:
         item = self.get_item(item_id)
         fields_set = payload.model_fields_set
+
+        # Snapshot every field an InventoryTransaction might need a
+        # before/after comparison for, taken before any mutation below -
+        # see _record_update_transactions, called after the mutations and
+        # validation succeed.
+        old_category_name = item.inventory_category.name
+        old_location = item.current_location
+        old_holder = item.current_holder
+        old_status = item.status
+        old_stock_quantity = item.stock_quantity
+        old_simple_values = {
+            "name": item.name,
+            "manufacturer": item.manufacturer,
+            "model": item.model,
+            "serial_number": item.serial_number,
+            "asset_tag": item.asset_tag,
+            "condition": item.condition,
+            "minimum_stock": item.minimum_stock,
+            "purchase_date": item.purchase_date,
+            "warranty_expiration": item.warranty_expiration,
+            "supplier": item.supplier,
+            "purchase_cost": item.purchase_cost,
+            "invoice_number": item.invoice_number,
+            "image_path": item.image_path,
+            "notes": item.notes,
+        }
 
         if "inventory_category_id" in fields_set and payload.inventory_category_id is not None:
             category = self._get_active_category_or_raise(payload.inventory_category_id)
@@ -370,8 +421,136 @@ class InventoryItemService:
 
         try:
             self._item_repository.update(item)
+            self._record_update_transactions(
+                item,
+                current_user,
+                old_category_name=old_category_name,
+                old_location=old_location,
+                old_holder=old_holder,
+                old_status=old_status,
+                old_stock_quantity=old_stock_quantity,
+                old_simple_values=old_simple_values,
+            )
             self._db.commit()
         except IntegrityError as exc:
             self._db.rollback()
             raise InventoryItemAssetTagConflictError from exc
         return item
+
+    def _record_update_transactions(
+        self,
+        item: InventoryItem,
+        current_user: User,
+        *,
+        old_category_name: str,
+        old_location: Location | None,
+        old_holder: User | None,
+        old_status: InventoryStatus,
+        old_stock_quantity: int,
+        old_simple_values: dict[str, object],
+    ) -> None:
+        """One InventoryTransaction row per field actually changed by
+        update_item - never a row for a field that was in the payload but
+        didn't change value. status/current_holder_user_id/
+        current_location_id/stock_quantity get their own dedicated
+        transaction types (matching the ones reserve/release/consume/
+        remove use for the same fields, so "every status change" is
+        queryable as one coherent set regardless of what triggered it);
+        every other changed field falls back to the generic EDITED type.
+        """
+        if item.inventory_category.name != old_category_name:
+            self._inventory_transaction_service.record(
+                inventory_item=item,
+                performed_by=current_user,
+                transaction_type=InventoryTransactionType.EDITED,
+                field_name="inventory_category_id",
+                old_value=old_category_name,
+                new_value=item.inventory_category.name,
+            )
+
+        new_location_title = item.current_location.title if item.current_location else None
+        old_location_title = old_location.title if old_location else None
+        if new_location_title != old_location_title:
+            self._inventory_transaction_service.record(
+                inventory_item=item,
+                performed_by=current_user,
+                transaction_type=InventoryTransactionType.LOCATION_CHANGED,
+                field_name="current_location_id",
+                old_value=old_location_title,
+                new_value=new_location_title,
+            )
+
+        new_holder_name = (
+            f"{item.current_holder.first_name} {item.current_holder.last_name}"
+            if item.current_holder
+            else None
+        )
+        old_holder_name = (
+            f"{old_holder.first_name} {old_holder.last_name}" if old_holder else None
+        )
+        if new_holder_name != old_holder_name:
+            self._inventory_transaction_service.record(
+                inventory_item=item,
+                performed_by=current_user,
+                transaction_type=InventoryTransactionType.HOLDER_CHANGED,
+                field_name="current_holder_user_id",
+                old_value=old_holder_name,
+                new_value=new_holder_name,
+            )
+
+        if item.status != old_status:
+            self._inventory_transaction_service.record(
+                inventory_item=item,
+                performed_by=current_user,
+                transaction_type=InventoryTransactionType.STATUS_CHANGED,
+                field_name="status",
+                old_value=old_status.value,
+                new_value=item.status.value,
+            )
+
+        if item.stock_quantity != old_stock_quantity:
+            self._inventory_transaction_service.record(
+                inventory_item=item,
+                performed_by=current_user,
+                transaction_type=InventoryTransactionType.STOCK_ADJUSTED,
+                quantity_delta=item.stock_quantity - old_stock_quantity,
+                field_name="stock_quantity",
+                old_value=str(old_stock_quantity),
+                new_value=str(item.stock_quantity),
+            )
+
+        new_simple_values = {
+            "name": item.name,
+            "manufacturer": item.manufacturer,
+            "model": item.model,
+            "serial_number": item.serial_number,
+            "asset_tag": item.asset_tag,
+            "condition": item.condition,
+            "minimum_stock": item.minimum_stock,
+            "purchase_date": item.purchase_date,
+            "warranty_expiration": item.warranty_expiration,
+            "supplier": item.supplier,
+            "purchase_cost": item.purchase_cost,
+            "invoice_number": item.invoice_number,
+            "image_path": item.image_path,
+            "notes": item.notes,
+        }
+        for field_name, new_value in new_simple_values.items():
+            old_value = old_simple_values[field_name]
+            if new_value != old_value:
+                self._inventory_transaction_service.record(
+                    inventory_item=item,
+                    performed_by=current_user,
+                    transaction_type=InventoryTransactionType.EDITED,
+                    field_name=field_name,
+                    old_value=self._stringify(old_value),
+                    new_value=self._stringify(new_value),
+                )
+
+    @staticmethod
+    def _stringify(value: object) -> str | None:
+        if value is None:
+            return None
+        if hasattr(value, "value"):  # enum member, e.g. InventoryCondition
+            return value.value
+        return str(value)

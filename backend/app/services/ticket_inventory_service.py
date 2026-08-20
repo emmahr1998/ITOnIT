@@ -1,6 +1,11 @@
 from sqlalchemy.orm import Session
 
-from app.models.enums import InventoryStatus, InventoryTrackingType, TicketInventoryUsageStatus
+from app.models.enums import (
+    InventoryStatus,
+    InventoryTrackingType,
+    InventoryTransactionType,
+    TicketInventoryUsageStatus,
+)
 from app.models.inventory_item import InventoryItem
 from app.models.ticket import Ticket
 from app.models.ticket_inventory_usage import TicketInventoryUsage
@@ -8,6 +13,8 @@ from app.models.user import User
 from app.repositories.inventory_item import InventoryItemRepository
 from app.repositories.ticket import TicketRepository
 from app.repositories.ticket_inventory_usage import TicketInventoryUsageRepository
+from app.services.history_service import HistoryService
+from app.services.inventory_transaction_service import InventoryTransactionService
 
 TECHNICIAN_ROLE_NAME = "Technician"
 _MANAGE_ROLE_NAMES = ("Company Administrator",)
@@ -69,14 +76,38 @@ class TicketInventoryStateError(Exception):
         self.message = message
 
 
+def _describe(item: InventoryItem, quantity: int) -> str:
+    """Human-readable "what" for a TicketHistory entry - matches how
+    TicketService.assign_technician already stores names, not raw ids,
+    in TicketHistory old_value/new_value."""
+    if item.tracking_type == InventoryTrackingType.SERIALIZED:
+        return f"{item.name} ({item.asset_tag})" if item.asset_tag else item.name
+    return f"{quantity} × {item.name}"
+
+
 class TicketInventoryService:
     """Owns the Ticket <-> Inventory integration: reserve/release/consume/
     remove, and the InventoryItem side effects each transition applies.
 
-    TicketInventoryUsage represents the CURRENT relationship only - no
-    InventoryTransaction audit rows are written here (Milestone 12's job,
-    not this one's). A row is created on reserve and deleted on release or
-    remove (undo); consume flips it from RESERVED to CONSUMED in place.
+    TicketInventoryUsage represents the CURRENT relationship only. Every
+    write here also records an InventoryTransaction row (Phase 12.1) via
+    InventoryTransactionService - RESERVED/RELEASED/CONSUMED/
+    CONSUME_UNDONE, one per business event, never a duplicate
+    STATUS_CHANGED/HOLDER_CHANGED row for the same event (those dedicated
+    types are reserved for manual, non-ticket-workflow edits made through
+    InventoryItemService - see that service's docstring). A row is
+    created on reserve and deleted on release or remove (undo); consume
+    flips it from RESERVED to CONSUMED in place.
+
+    Ticket-related actions (reserve/release/consume/remove) also write a
+    lightweight, narrative TicketHistory entry via HistoryService, exactly
+    like every other ticket mutation in this codebase (e.g. CommentService
+    already writes both a Comment and a TicketHistory row for one action) -
+    InventoryTransaction is the inventory-centric source of truth,
+    TicketHistory stays the ticket-facing timeline. release_all_for_ticket
+    (the ticket-deletion cleanup path) does NOT write TicketHistory: the
+    ticket and all its history rows are being deleted in the same request
+    moments later, so a history entry there would be pointless.
 
     Ticket-level access follows the same pattern as
     TicketService.change_status: the route enforces the role gate
@@ -100,6 +131,8 @@ class TicketInventoryService:
         usage_repository: TicketInventoryUsageRepository | None = None,
         item_repository: InventoryItemRepository | None = None,
         ticket_repository: TicketRepository | None = None,
+        inventory_transaction_service: InventoryTransactionService | None = None,
+        history_service: HistoryService | None = None,
     ) -> None:
         self._db = db
         self._company_id = company_id
@@ -113,6 +146,14 @@ class TicketInventoryService:
         )
         self._ticket_repository = (
             ticket_repository if ticket_repository is not None else TicketRepository(db, company_id)
+        )
+        self._inventory_transaction_service = (
+            inventory_transaction_service
+            if inventory_transaction_service is not None
+            else InventoryTransactionService(db, company_id)
+        )
+        self._history_service = (
+            history_service if history_service is not None else HistoryService(db, company_id)
         )
 
     # ---- ownership -----------------------------------------------------
@@ -191,6 +232,16 @@ class TicketInventoryService:
                 item.reserved_quantity += quantity
                 self._item_repository.update(item)
                 self._usage_repository.update(existing)
+                self._inventory_transaction_service.record(
+                    inventory_item=item,
+                    performed_by=current_user,
+                    transaction_type=InventoryTransactionType.RESERVED,
+                    ticket=ticket,
+                    quantity_delta=quantity,
+                )
+                self._history_service.record(
+                    ticket.id, current_user, "inventory", None, f"Reserved {_describe(item, quantity)}"
+                )
                 self._db.commit()
                 return existing
             item.reserved_quantity += quantity
@@ -209,6 +260,19 @@ class TicketInventoryService:
         usage.selected_by = current_user
         self._item_repository.update(item)
         self._usage_repository.create(usage)
+        self._inventory_transaction_service.record(
+            inventory_item=item,
+            performed_by=current_user,
+            transaction_type=InventoryTransactionType.RESERVED,
+            ticket=ticket,
+            quantity_delta=usage_quantity,
+            field_name="status" if item.tracking_type == InventoryTrackingType.SERIALIZED else None,
+            old_value="AVAILABLE" if item.tracking_type == InventoryTrackingType.SERIALIZED else None,
+            new_value="RESERVED" if item.tracking_type == InventoryTrackingType.SERIALIZED else None,
+        )
+        self._history_service.record(
+            ticket.id, current_user, "inventory", None, f"Reserved {_describe(item, usage_quantity)}"
+        )
         self._db.commit()
         return usage
 
@@ -241,8 +305,22 @@ class TicketInventoryService:
             raise TicketInventoryStateError("Only a reserved item can be released")
 
         item = usage.inventory_item
+        is_serialized = item.tracking_type == InventoryTrackingType.SERIALIZED
         self._revert_reserved(item, usage)
         self._item_repository.update(item)
+        self._inventory_transaction_service.record(
+            inventory_item=item,
+            performed_by=current_user,
+            transaction_type=InventoryTransactionType.RELEASED,
+            ticket=ticket,
+            quantity_delta=-1 if is_serialized else -usage.quantity,
+            field_name="status" if is_serialized else None,
+            old_value="RESERVED" if is_serialized else None,
+            new_value="AVAILABLE" if is_serialized else None,
+        )
+        self._history_service.record(
+            ticket.id, current_user, "inventory", None, f"Released {_describe(item, usage.quantity)}"
+        )
         self._usage_repository.delete(usage)
         self._db.commit()
 
@@ -258,15 +336,33 @@ class TicketInventoryService:
             item.reserved_quantity = 0
             item.current_holder_user_id = ticket.created_by_user_id
             item.current_holder = ticket.created_by
+            quantity_delta = None
+            notes = (
+                f"Status RESERVED→IN_USE; holder assigned to "
+                f"{ticket.created_by.first_name} {ticket.created_by.last_name}"
+            )
         else:
             if usage.quantity > item.stock_quantity:
                 raise TicketInventoryInsufficientStockError
             item.stock_quantity -= usage.quantity
             item.reserved_quantity -= usage.quantity
+            quantity_delta = -usage.quantity
+            notes = None
 
         usage.status = TicketInventoryUsageStatus.CONSUMED
         self._item_repository.update(item)
         self._usage_repository.update(usage)
+        self._inventory_transaction_service.record(
+            inventory_item=item,
+            performed_by=current_user,
+            transaction_type=InventoryTransactionType.CONSUMED,
+            ticket=ticket,
+            quantity_delta=quantity_delta,
+            notes=notes,
+        )
+        self._history_service.record(
+            ticket.id, current_user, "inventory", None, f"Consumed {_describe(item, usage.quantity)}"
+        )
         self._db.commit()
         return usage
 
@@ -280,23 +376,70 @@ class TicketInventoryService:
             raise TicketInventoryStateError("Only a consumed item can be removed")
 
         item = usage.inventory_item
+        if item.tracking_type == InventoryTrackingType.SERIALIZED:
+            quantity_delta = None
+            notes = "Status IN_USE→AVAILABLE; holder cleared"
+        else:
+            quantity_delta = usage.quantity
+            notes = None
         self._revert_consumed(item, usage)
         self._item_repository.update(item)
+        self._inventory_transaction_service.record(
+            inventory_item=item,
+            performed_by=current_user,
+            transaction_type=InventoryTransactionType.CONSUME_UNDONE,
+            ticket=ticket,
+            quantity_delta=quantity_delta,
+            notes=notes,
+        )
+        self._history_service.record(
+            ticket.id,
+            current_user,
+            "inventory",
+            None,
+            f"Reverted consumption of {_describe(item, usage.quantity)}",
+        )
         self._usage_repository.delete(usage)
         self._db.commit()
 
-    def release_all_for_ticket(self, ticket_id: int) -> None:
+    def release_all_for_ticket(self, ticket: Ticket, current_user: User) -> None:
         """Called by TicketService.delete_ticket before removing a ticket,
         so deleting one never leaves inventory stuck RESERVED/IN_USE with
         no owning ticket. No role/ownership gate here - the caller (ticket
-        deletion) has already been authorized at its own route."""
-        usages = self._usage_repository.list_for_ticket(ticket_id)
+        deletion) has already been authorized at its own route.
+
+        Does not write TicketHistory - the ticket and all its history rows
+        are about to be deleted in this same request, so a history entry
+        here would be pointless. Does still write InventoryTransaction:
+        the item's own audit trail must not have a gap just because the
+        ticket that caused this event no longer exists (see
+        InventoryTransaction's ticket_id ON DELETE SET NULL and the
+        ticket_number preserved in `notes` for exactly this reason).
+        """
+        usages = self._usage_repository.list_for_ticket(ticket.id)
         for usage in usages:
             item = usage.inventory_item
+            is_serialized = item.tracking_type == InventoryTrackingType.SERIALIZED
             if usage.status == TicketInventoryUsageStatus.RESERVED:
                 self._revert_reserved(item, usage)
+                self._inventory_transaction_service.record(
+                    inventory_item=item,
+                    performed_by=current_user,
+                    transaction_type=InventoryTransactionType.RELEASED,
+                    ticket=ticket,
+                    quantity_delta=-1 if is_serialized else -usage.quantity,
+                    notes=f"Ticket {ticket.ticket_number} deleted; reservation released automatically.",
+                )
             else:
                 self._revert_consumed(item, usage)
+                self._inventory_transaction_service.record(
+                    inventory_item=item,
+                    performed_by=current_user,
+                    transaction_type=InventoryTransactionType.CONSUME_UNDONE,
+                    ticket=ticket,
+                    quantity_delta=usage.quantity if not is_serialized else None,
+                    notes=f"Ticket {ticket.ticket_number} deleted; consumption reverted automatically.",
+                )
             self._item_repository.update(item)
             self._usage_repository.delete(usage)
         if usages:
