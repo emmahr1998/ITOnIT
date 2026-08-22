@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.ticket import TicketUserSummary
+from app.schemas.types import UTCDatetime
 
 
 class TicketHistoryResponse(BaseModel):
@@ -18,4 +17,4 @@ class TicketHistoryResponse(BaseModel):
     performed_by: TicketUserSummary = Field(validation_alias="changed_by")
     old_value: str | None = None
     new_value: str | None = None
-    timestamp: datetime = Field(validation_alias="created_at")
+    timestamp: UTCDatetime = Field(validation_alias="created_at")

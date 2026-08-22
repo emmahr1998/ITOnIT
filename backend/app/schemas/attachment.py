@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict
 
 from app.schemas.ticket import TicketUserSummary
+from app.schemas.types import UTCDatetime
 
 
 class AttachmentResponse(BaseModel):
@@ -20,4 +19,4 @@ class AttachmentResponse(BaseModel):
     content_type: str | None
     file_size: int
     uploaded_by: TicketUserSummary
-    created_at: datetime
+    created_at: UTCDatetime

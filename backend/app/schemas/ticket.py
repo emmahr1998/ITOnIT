@@ -1,11 +1,10 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import TicketStatus
 from app.schemas.category import CategoryResponse
 from app.schemas.location import LocationResponse
 from app.schemas.priority import PriorityResponse
+from app.schemas.types import UTCDatetime
 
 
 class TicketUserSummary(BaseModel):
@@ -101,7 +100,7 @@ class TicketResponse(BaseModel):
     category: CategoryResponse
     created_by: TicketUserSummary
     assigned_technician: TicketUserSummary | None
-    created_at: datetime
-    updated_at: datetime
-    resolved_at: datetime | None
-    closed_at: datetime | None
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
+    resolved_at: UTCDatetime | None
+    closed_at: UTCDatetime | None

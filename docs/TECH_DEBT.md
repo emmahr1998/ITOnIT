@@ -338,3 +338,131 @@ updates the corresponding SQLAlchemy column types so future migrations
 default to Unicode-safe types on this dialect, and (4) documents, for
 anyone debugging historical data, that a `?` where a special character
 would be expected may indicate this bug rather than genuine user input.
+
+## Analytics & Dashboard prerequisite: UTC timestamp normalization
+
+### ✅ RESOLVED (code) / ⏳ PENDING (data) — every system timestamp column was silently DB-server-local time, not UTC
+
+**Found:** during design review for the Analytics & Dashboard milestone
+(2026-08-22), while working out how `Company.timezone` should back
+"Created Today"/"Resolved Today" boundaries.
+
+**What was wrong:** `CreatedAtMixin`/`TimestampMixin` (`app/models/mixins.py`)
+populated `created_at`/`updated_at` via SQL Server's `CURRENT_TIMESTAMP`
+(`server_default=func.now()`), which reflects the **database server's own
+OS clock** - confirmed empirically against the real dev SQL Server
+(`GETDATE()` read `17:35:12` local while `GETUTCDATE()` read `14:35:12`
+UTC, a +03:00 offset with no relationship to any company's configured
+timezone). Meanwhile `Ticket.resolved_at`/`closed_at` and
+`Comment.updated_at` were set explicitly in application code via
+`datetime.now(timezone.utc)` - genuinely UTC. These two families of
+timestamps were never on the same basis: `resolved_at - created_at`
+(average resolution time; also `frontend/src/utils/ticketAge.ts`'s
+`ticketAgeDays()`) was silently wrong by the DB server's UTC offset for
+every ticket that has ever been resolved, in every environment, since the
+very first migration - not something the Analytics phase introduced,
+just the first place it would have produced a visibly wrong number.
+
+Separately, confirmed Pydantic serializes a naive `datetime` with no
+`Z`/offset suffix; the frontend's `new Date(...)` calls (12+ files) then
+parse an unmarked ISO string as the **browser's local time** per the
+ECMAScript spec - a second, independent ambiguity on top of the write-side
+one.
+
+**Root-cause fix applied:** `app/core/time.py` adds one function,
+`utc_now_naive()` (`datetime.now(timezone.utc).replace(tzinfo=None)`),
+now the sole generator of every persisted system timestamp in this schema:
+`CreatedAtMixin.default`/`TimestampMixin.default`/`.onupdate`,
+`TicketService.change_status`'s `resolved_at`/`closed_at`, and
+`CommentService.update_comment`'s `updated_at`. Persisted values are
+**naive UTC, not aware UTC** - empirically proven byte-identical for
+storage purposes (SQL Server's `DATETIME`/`DATETIME2` types cannot carry
+timezone information at all; an aware value round-trips through pyodbc
+indistinguishable from a naive one, confirmed against the real dev SQL
+Server with a throwaway table, since dropped) - naive was chosen anyway
+to avoid a subtler footgun: mixing an aware in-memory object with a
+naive one fetched via a separate query risks a timing-dependent
+`TypeError: can't subtract offset-naive and offset-aware datetimes`.
+
+Migration `73bda2fc3df1` changes all 25 audited system timestamp columns
+from `DATETIME` to `DATETIME2(3)` (lossless; also removes an implicit
+precision-truncating cast that occurred every time `SYSUTCDATETIME()`,
+which returns `datetime2(7)`, fed a plain `DATETIME` column's default) and
+replaces the `CURRENT_TIMESTAMP` default constraint with `SYSUTCDATETIME()`
+on exactly the 22 columns that had one (the other 3 -
+`tickets.resolved_at`, `tickets.closed_at`, `comments.updated_at` - are
+transition-specific, application-set-only fields with no default before
+or after). The DB-level default is a defense-in-depth fallback only; the
+Python-side default is authoritative for every write, since 100% of
+writes in this codebase go through the ORM. The one index referencing an
+audited column (`ix_inventory_transactions_company_item_created`) is
+dropped and recreated around the type change; confirmed via
+`sys.indexes`/`sys.index_columns` against the real dev DB that no other
+index touches any of the 25 columns.
+
+New `app/schemas/types.py`'s `UTCDatetime` (a Pydantic `Annotated` type)
+attaches UTC tzinfo to a naive value at the API boundary, applied to every
+system-timestamp field across all 12 response schemas that had one - so
+JSON responses carry an explicit `Z`/`+00:00` suffix and the frontend's
+existing `new Date(...)` calls parse correctly, with **no frontend code
+changes**.
+
+**⏳ Not yet done - deliberately, pending separate explicit approval:**
+this migration does not touch any existing row's timestamp *values* - only
+column type and default constraints. Historical rows written before this
+migration keep whatever digits they already had, and **that basis cannot
+be reliably recovered**: comparing a row's timestamp against any recorded
+cutover marker is ambiguous within a window as wide as the DB server's
+UTC offset (a row written moments after cutover has smaller UTC-basis
+digits than a local-basis cutover marker would suggest, and gets
+misclassified - confirmed by construction, not assumption). The only
+ambiguity-free discriminator is primary key `id` (monotonic, unaffected by
+clock basis), which would work but adds permanent per-table cutover-id
+bookkeeping to the serialization layer for the sake of a genuinely tiny
+amount of dev-only data (measured on the real dev DB at design time: 1
+company, 10 users, 3 tickets, 1 comment, 1 attachment, 8 history rows,
+11 inventory categories, zero inventory items/usage/transactions).
+
+**Chosen resolution:** reseed the dev database from scratch after this
+migration lands, rather than build and maintain that bookkeeping. Until
+that reseed happens, existing rows' timestamps remain of **unproven
+basis** - do not treat a `?`-column-bug-style assumption ("it's probably
+fine") as fact, and do not build any feature that computes exact
+durations or day-boundaries from data older than the reseed without
+accounting for this. The reseed itself is a separate, explicitly-gated,
+destructive step - not part of this fix - see the Analytics & Dashboard
+Phase A follow-up report for the exact proposed reset/reseed commands,
+pending approval.
+
+**Follow-up correction (same day):** reseeding alone was found insufficient
+- even a completely *fresh* database still receives ~16 rows on the wrong
+time basis, because three older, already-applied migrations
+(`e05a93267ebf`, `b8c5e972dfbf`, `5aeede95b6be`) seed static metadata (the
+Default Company row, its 4 starter priorities, its 11 starter inventory
+categories) via raw `CURRENT_TIMESTAMP` SQL that runs *before* this
+migration in the chain. Rather than edit those historical migration files,
+migration `73bda2fc3df1` gained one additional, narrowly-targeted step
+(`_normalize_seed_metadata_timestamps`, run last, only in `upgrade()`) that
+rewrites exactly those rows' `created_at`/`updated_at` to `SYSUTCDATETIME()`
+- matched by stable business identifiers only (`company_code`, priority
+`title`, category `name`, always scoped through the Default Company's own
+id), never a hardcoded numeric id, and never touching a same-named
+priority/category belonging to a different, real company. These rows are
+static system/default metadata, not user-generated history, so overwriting
+their original (already-wrong) creation instant loses no meaningful audit
+value - unlike every ticket/comment/attachment/inventory-transaction/
+ticket-history row, which this step never touches and which remain exactly
+as ambiguous as described above until the reseed. `downgrade()`
+deliberately does not attempt to revert this specific step - there is no
+correct value to revert *to*.
+
+**Verified:** throwaway-database migration run (`alembic upgrade head`
+against a fresh DB), ORM write/round-trip checks, raw-SQL
+`SYSUTCDATETIME()` fallback check, live HTTP API serialization check, and
+a real create→resolve→measure arithmetic check all passing with no
+~3-hour skew - full results in the Analytics & Dashboard Phase A report(s).
+Re-verified after the follow-up correction: Default Company, all 4
+priorities, and all 11 inventory categories now read UTC-basis
+`created_at`/`updated_at` on a completely fresh database - zero known
+DB-local-basis timestamps remain anywhere in a fresh install. Real dev
+database **not** touched by any of this verification.
