@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.types import UTCDatetime
 
 
 class PriorityCreate(BaseModel):
@@ -40,5 +40,5 @@ class PriorityResponse(BaseModel):
 
     id: int
     title: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime

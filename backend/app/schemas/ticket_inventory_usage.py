@@ -1,10 +1,9 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import TicketInventoryUsageStatus
 from app.schemas.inventory_item import InventoryItemResponse
 from app.schemas.ticket import TicketUserSummary
+from app.schemas.types import UTCDatetime
 
 
 class TicketInventoryReserve(BaseModel):
@@ -36,5 +35,5 @@ class TicketInventoryUsageResponse(BaseModel):
     quantity: int
     status: TicketInventoryUsageStatus
     selected_by: TicketUserSummary
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime

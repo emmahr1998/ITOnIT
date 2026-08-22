@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.enums import InventoryCondition, InventoryStatus, InventoryTrackingType
 from app.schemas.inventory_category import InventoryCategoryResponse
 from app.schemas.location import LocationResponse
+from app.schemas.types import UTCDatetime
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -179,5 +180,5 @@ class InventoryItemResponse(BaseModel):
     invoice_number: str | None
     image_path: str | None
     notes: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime

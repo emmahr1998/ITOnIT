@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Text
+from sqlalchemy.dialects.mssql import DATETIME2
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -32,7 +33,10 @@ class Comment(CreatedAtMixin, Base):
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False)
     author_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # No default - stays None until CommentService.update_comment sets it via
+    # app.core.time.utc_now_naive on an edit. See docs/TECH_DEBT.md's UTC
+    # timestamp normalization entry.
+    updated_at: Mapped[datetime | None] = mapped_column(DATETIME2(precision=3), nullable=True)
 
     company: Mapped["Company"] = relationship()
     ticket: Mapped["Ticket"] = relationship(back_populates="comments")

@@ -1,7 +1,6 @@
-from datetime import datetime, timezone
-
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now_naive
 from app.models.comment import Comment
 from app.models.user import User
 from app.repositories.comment import CommentRepository
@@ -88,7 +87,7 @@ class CommentService:
 
         old_content = comment.content
         comment.content = content
-        comment.updated_at = datetime.now(timezone.utc)
+        comment.updated_at = utc_now_naive()
         self._comment_repository.update(comment)
         self._history_service.record(
             ticket_id, current_user, "comment_edited", old_content, content

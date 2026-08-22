@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.department import DepartmentResponse
+from app.schemas.types import UTCDatetime
 from app.schemas.validators import validate_email_format
 
 
@@ -104,8 +103,8 @@ class UserResponse(BaseModel):
     role: str
     theme: str | None
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     @field_validator("role", mode="before")
     @classmethod

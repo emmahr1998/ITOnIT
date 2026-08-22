@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import InventoryTransactionType
 from app.schemas.ticket import TicketUserSummary
+from app.schemas.types import UTCDatetime
 
 
 class InventoryTransactionItemSummary(BaseModel):
@@ -44,4 +43,4 @@ class InventoryTransactionResponse(BaseModel):
     old_value: str | None
     new_value: str | None
     notes: str | None
-    created_at: datetime
+    created_at: UTCDatetime

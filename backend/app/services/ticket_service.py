@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now_naive
 from app.models.category import Category
 from app.models.enums import TicketStatus
 from app.models.location import Location
@@ -484,7 +485,7 @@ class TicketService:
 
         old_status = ticket.status.value
         ticket.status = new_status
-        now = datetime.now(timezone.utc)
+        now = utc_now_naive()
         if new_status == TicketStatus.RESOLVED:
             ticket.resolved_at = now
         elif new_status == TicketStatus.CLOSED:

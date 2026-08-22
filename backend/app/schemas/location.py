@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.types import UTCDatetime
 
 
 class LocationCreate(BaseModel):
@@ -46,5 +46,5 @@ class LocationResponse(BaseModel):
     id: int
     title: str
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime

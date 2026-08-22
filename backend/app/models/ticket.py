@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy.dialects.mssql import DATETIME2
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -61,8 +62,13 @@ class Ticket(TimestampMixin, Base):
     assigned_technician_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )
-    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # No default/server_default - these are only ever set by TicketService
+    # on the specific NEW->RESOLVED/CLOSED transition (see change_status),
+    # via app.core.time.utc_now_naive, same UTC contract as every other
+    # timestamp in this schema. See docs/TECH_DEBT.md's UTC timestamp
+    # normalization entry.
+    resolved_at: Mapped[datetime | None] = mapped_column(DATETIME2(precision=3), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DATETIME2(precision=3), nullable=True)
 
     company: Mapped["Company"] = relationship(back_populates="tickets")
     category: Mapped["Category"] = relationship(back_populates="tickets")

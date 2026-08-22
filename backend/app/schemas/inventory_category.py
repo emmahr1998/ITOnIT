@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.types import UTCDatetime
 
 
 class InventoryCategoryCreate(BaseModel):
@@ -48,4 +48,4 @@ class InventoryCategoryResponse(BaseModel):
     id: int
     name: str
     is_active: bool
-    created_at: datetime
+    created_at: UTCDatetime
