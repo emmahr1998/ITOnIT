@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
@@ -88,6 +89,29 @@ class InvalidStatusTransitionError(Exception):
         self.message = message
 
 
+@dataclass(frozen=True)
+class TicketOwnershipScope:
+    """The one canonical ticket ownership/visibility rule, shared by
+    every ticket-scoped read - normal ticket listing (list_tickets) and
+    ticket analytics (AnalyticsService) alike. See
+    TicketService.resolve_ownership_scope's docstring for the rule itself.
+
+    Each field is None when that dimension is unrestricted - which only
+    ever happens for both fields at once (Company Administrator sees the
+    whole company); Technician and Employee each always have exactly one
+    field set to their own id. is_company_wide is the same check made
+    explicit, rather than callers re-deriving "both fields None" for
+    themselves at every use site.
+    """
+
+    created_by_user_id: int | None
+    assigned_technician_id: int | None
+
+    @property
+    def is_company_wide(self) -> bool:
+        return self.created_by_user_id is None and self.assigned_technician_id is None
+
+
 class TicketService:
     """Owns ticket business rules: ownership scope, status workflow, assignment validation.
 
@@ -158,6 +182,29 @@ class TicketService:
     def _is_manager_or_admin(user: User) -> bool:
         return user.role.name in _MANAGE_ROLE_NAMES
 
+    @staticmethod
+    def resolve_ownership_scope(current_user: User) -> TicketOwnershipScope:
+        """The one canonical ticket ownership/visibility rule:
+
+        - Company Administrator: all tickets in their company (both
+          fields None - no restriction).
+        - Technician: only tickets assigned to that technician.
+        - Employee: only tickets created by that employee.
+
+        Every ticket-scoped read must call this - never re-derive the
+        role check inline - so normal ticket listing and ticket analytics
+        can never drift apart on who is allowed to see what.
+        """
+        if TicketService._is_manager_or_admin(current_user):
+            return TicketOwnershipScope(created_by_user_id=None, assigned_technician_id=None)
+        if current_user.role.name == TECHNICIAN_ROLE_NAME:
+            return TicketOwnershipScope(
+                created_by_user_id=None, assigned_technician_id=current_user.id
+            )
+        return TicketOwnershipScope(
+            created_by_user_id=current_user.id, assigned_technician_id=None
+        )
+
     def _ensure_can_view(self, ticket: Ticket, user: User) -> None:
         if self._is_manager_or_admin(user):
             return
@@ -208,11 +255,11 @@ class TicketService:
         GET /all-tickets (the full filter set) - the ownership scoping
         below applies identically to both.
         """
-        if not self._is_manager_or_admin(current_user):
-            if current_user.role.name == TECHNICIAN_ROLE_NAME:
-                assigned_to = current_user.id  # hard scope; overrides any client value
-            else:
-                created_by = current_user.id  # hard scope; overrides any client value
+        scope = self.resolve_ownership_scope(current_user)
+        if scope.created_by_user_id is not None:
+            created_by = scope.created_by_user_id  # hard scope; overrides any client value
+        if scope.assigned_technician_id is not None:
+            assigned_to = scope.assigned_technician_id  # hard scope; overrides any client value
 
         return self._ticket_repository.get_with_filters(
             status=status,

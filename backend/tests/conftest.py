@@ -926,6 +926,117 @@ class FakeTicketRepository:
             if t.ticket_number.startswith(prefix) and self._in_scope(t)
         )
 
+    # ---- analytics aggregates (mirrors TicketRepository's SQL exactly in
+    # pure Python) --------------------------------------------------------
+
+    def _scoped(
+        self, created_by_user_id: int | None, assigned_technician_id: int | None
+    ) -> list[Ticket]:
+        results = [t for t in self._by_id.values() if self._in_scope(t)]
+        if created_by_user_id is not None:
+            results = [t for t in results if t.created_by_user_id == created_by_user_id]
+        if assigned_technician_id is not None:
+            results = [t for t in results if t.assigned_technician_id == assigned_technician_id]
+        return results
+
+    def count_grouped_by_status(
+        self, *, created_by_user_id: int | None = None, assigned_technician_id: int | None = None
+    ) -> dict[TicketStatus, int]:
+        counts: dict[TicketStatus, int] = {}
+        for t in self._scoped(created_by_user_id, assigned_technician_id):
+            counts[t.status] = counts.get(t.status, 0) + 1
+        return counts
+
+    def count_grouped_by_priority(
+        self, *, created_by_user_id: int | None = None, assigned_technician_id: int | None = None
+    ) -> list[tuple[str, int]]:
+        counts: dict[str, int] = {}
+        for t in self._scoped(created_by_user_id, assigned_technician_id):
+            if t.priority is not None and t.priority.company_id == self.company_id:
+                counts[t.priority.title] = counts.get(t.priority.title, 0) + 1
+        return list(counts.items())
+
+    def count_grouped_by_category(
+        self, *, created_by_user_id: int | None = None, assigned_technician_id: int | None = None
+    ) -> list[tuple[str, int]]:
+        counts: dict[str, int] = {}
+        for t in self._scoped(created_by_user_id, assigned_technician_id):
+            if t.category is not None and t.category.company_id == self.company_id:
+                counts[t.category.name] = counts.get(t.category.name, 0) + 1
+        return list(counts.items())
+
+    def count_high_priority_open(
+        self, *, created_by_user_id: int | None = None, assigned_technician_id: int | None = None
+    ) -> int:
+        terminal = {TicketStatus.RESOLVED, TicketStatus.CLOSED}
+        return sum(
+            1
+            for t in self._scoped(created_by_user_id, assigned_technician_id)
+            if t.priority is not None
+            and t.priority.company_id == self.company_id
+            and t.priority.title in ("High", "Critical")
+            and t.status not in terminal
+        )
+
+    def count_unassigned(self) -> int:
+        return sum(
+            1
+            for t in self._by_id.values()
+            if self._in_scope(t)
+            and t.status == TicketStatus.NEW
+            and t.assigned_technician_id is None
+        )
+
+    def avg_resolution_minutes(
+        self, *, created_by_user_id: int | None = None, assigned_technician_id: int | None = None
+    ) -> float | None:
+        durations = [
+            (t.resolved_at - t.created_at).total_seconds() / 60
+            for t in self._scoped(created_by_user_id, assigned_technician_id)
+            if t.resolved_at is not None
+        ]
+        return sum(durations) / len(durations) if durations else None
+
+    def _count_by_boundaries(
+        self,
+        date_attr: str,
+        boundaries: list[tuple[datetime, datetime]],
+        created_by_user_id: int | None,
+        assigned_technician_id: int | None,
+    ) -> list[int]:
+        counts = [0] * len(boundaries)
+        for t in self._scoped(created_by_user_id, assigned_technician_id):
+            value = getattr(t, date_attr)
+            if value is None:
+                continue
+            for i, (start, end) in enumerate(boundaries):
+                if start <= value < end:
+                    counts[i] += 1
+                    break
+        return counts
+
+    def count_created_by_boundaries(
+        self,
+        boundaries: list[tuple[datetime, datetime]],
+        *,
+        created_by_user_id: int | None = None,
+        assigned_technician_id: int | None = None,
+    ) -> list[int]:
+        return self._count_by_boundaries(
+            "created_at", boundaries, created_by_user_id, assigned_technician_id
+        )
+
+    def count_resolved_by_boundaries(
+        self,
+        boundaries: list[tuple[datetime, datetime]],
+        *,
+        created_by_user_id: int | None = None,
+        assigned_technician_id: int | None = None,
+    ) -> list[int]:
+        return self._count_by_boundaries(
+            "resolved_at", boundaries, created_by_user_id, assigned_technician_id
+        )
+
 
 class FakeCommentRepository:
     """In-memory stand-in for CommentRepository. Same rationale as FakeTicketRepository."""
