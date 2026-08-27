@@ -4,6 +4,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.enums import InventoryCondition, InventoryStatus, InventoryTrackingType
+from app.models.inventory_category import InventoryCategory
 from app.models.inventory_item import InventoryItem
 from app.repositories.base import CompanyScopedRepository
 
@@ -194,3 +195,37 @@ class InventoryItemRepository(CompanyScopedRepository[InventoryItem]):
             warranty_expiring_days=warranty_expiring_days,
         )
         return self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+
+    # ---- analytics aggregates --------------------------------------------
+
+    def count_grouped_by_status(self) -> dict[InventoryStatus, int]:
+        """One GROUP BY query for the whole status breakdown - never one
+        COUNT per status. A status with zero matching items simply doesn't
+        appear in the result."""
+        stmt = (
+            select(InventoryItem.status, func.count())
+            .where(InventoryItem.company_id == self.company_id)
+            .group_by(InventoryItem.status)
+        )
+        return dict(self.db.execute(stmt).all())
+
+    def count_grouped_by_category(self) -> list[tuple[str, int]]:
+        """One GROUP BY query, joined to InventoryCategory for its name.
+        Deliberately does not filter on InventoryCategory.is_active - an
+        item already assigned to a since-deactivated category is still
+        real, current inventory and must still be counted (deactivating a
+        category only blocks *new* assignments, see
+        InventoryCategoryInactiveError). InventoryCategory.company_id is
+        redundant given FK integrity but kept explicit anyway, matching
+        CompanyScopedRepository's own documented convention."""
+        stmt = (
+            select(InventoryCategory.name, func.count())
+            .select_from(InventoryItem)
+            .join(InventoryCategory, InventoryItem.inventory_category_id == InventoryCategory.id)
+            .where(
+                InventoryItem.company_id == self.company_id,
+                InventoryCategory.company_id == self.company_id,
+            )
+            .group_by(InventoryCategory.name)
+        )
+        return list(self.db.execute(stmt).all())

@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 
-from app.models.enums import TERMINAL_TICKET_STATUSES, TicketStatus
-from app.services.analytics_service import TicketAnalytics
+from app.models.enums import TERMINAL_TICKET_STATUSES, InventoryStatus, TicketStatus
+from app.services.analytics_service import InventoryAnalytics, TicketAnalytics
 
 
 class StatusBreakdownItem(BaseModel):
@@ -92,4 +92,59 @@ class TicketAnalyticsResponse(BaseModel):
                 )
                 for point in analytics.monthly_trend
             ],
+        )
+
+
+class InventoryStatusBreakdownItem(BaseModel):
+    status: InventoryStatus
+    count: int
+
+
+class InventoryCategoryBreakdownItem(BaseModel):
+    category: str
+    count: int
+
+
+class InventoryAnalyticsResponse(BaseModel):
+    """GET /analytics/inventory - one schema for both roles it applies to
+    (Employee is refused before this schema is ever built - see
+    InventoryAnalyticsPermissionError). Company Administrator gets every
+    company-wide field populated and reserved_for_my_tickets_count null
+    (no meaningful company-wide equivalent); Technician gets the reverse -
+    every company-wide field null and reserved_for_my_tickets_count
+    populated. AnalyticsService.get_inventory_analytics decides which
+    shape to build, not this class - from_domain only reshapes whatever
+    InventoryAnalytics it's given.
+    """
+
+    total_items: int | None
+    low_stock_count: int | None
+    warranty_expiring_count: int | None
+    by_status: list[InventoryStatusBreakdownItem] | None
+    by_category: list[InventoryCategoryBreakdownItem] | None
+    reserved_for_my_tickets_count: int | None
+
+    @classmethod
+    def from_domain(cls, analytics: InventoryAnalytics) -> "InventoryAnalyticsResponse":
+        return cls(
+            total_items=analytics.total_items,
+            low_stock_count=analytics.low_stock_count,
+            warranty_expiring_count=analytics.warranty_expiring_count,
+            by_status=(
+                None
+                if analytics.by_status is None
+                else [
+                    InventoryStatusBreakdownItem(status=status, count=count)
+                    for status, count in analytics.by_status.items()
+                ]
+            ),
+            by_category=(
+                None
+                if analytics.by_category is None
+                else [
+                    InventoryCategoryBreakdownItem(category=name, count=count)
+                    for name, count in analytics.by_category
+                ]
+            ),
+            reserved_for_my_tickets_count=analytics.reserved_for_my_tickets_count,
         )
