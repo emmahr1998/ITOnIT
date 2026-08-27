@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from app.core.security import create_access_token, hash_password
+from app.dependencies.analytics import get_analytics_service
 from app.dependencies.attachment import get_attachment_service
 from app.dependencies.auth import get_auth_service, get_current_company_id, get_user_repository
 from app.dependencies.category import get_category_service
@@ -45,6 +46,7 @@ from app.models.ticket import Ticket
 from app.models.ticket_history import TicketHistory
 from app.models.ticket_inventory_usage import TicketInventoryUsage
 from app.models.user import User
+from app.services.analytics_service import AnalyticsService
 from app.services.attachment_service import AttachmentService
 from app.services.auth_service import AuthService
 from app.services.category_service import CategoryService
@@ -2213,6 +2215,12 @@ def client(
             ticket_inventory_service=_make_ticket_inventory_service(company_id),
         )
 
+    def _analytics_service(company_id: int = Depends(get_current_company_id)) -> AnalyticsService:
+        ticket_repository.company_id = company_id
+        return AnalyticsService(
+            db=FakeSession(), company_id=company_id, ticket_repository=ticket_repository
+        )
+
     def _comment_service(company_id: int = Depends(get_current_company_id)) -> CommentService:
         comment_repository.company_id = company_id
         return CommentService(
@@ -2256,6 +2264,7 @@ def client(
     app.dependency_overrides[get_inventory_transaction_service] = _inventory_transaction_service
     app.dependency_overrides[get_user_service] = _user_service
     app.dependency_overrides[get_ticket_service] = _ticket_service
+    app.dependency_overrides[get_analytics_service] = _analytics_service
     app.dependency_overrides[get_ticket_inventory_service] = _ticket_inventory_service
     app.dependency_overrides[get_comment_service] = _comment_service
     app.dependency_overrides[get_history_service] = _history_service

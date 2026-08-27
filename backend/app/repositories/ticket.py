@@ -4,7 +4,7 @@ from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.category import Category
-from app.models.enums import TicketStatus
+from app.models.enums import TERMINAL_TICKET_STATUSES, TicketStatus
 from app.models.priority import Priority
 from app.models.ticket import Ticket
 from app.models.user import User
@@ -24,12 +24,6 @@ _SORTABLE_COLUMNS = {
     "title": Ticket.title,
     "ticket_number": Ticket.ticket_number,
 }
-
-# A ticket in one of these statuses is done - excluded from "open" counts
-# like high/critical-open. Mirrors the frontend dashboard's own openStatuses
-# set (frontend/src/pages/DashboardPage.tsx) so "open" means the same thing
-# on both sides.
-_TERMINAL_STATUSES = frozenset({TicketStatus.RESOLVED, TicketStatus.CLOSED})
 
 # "High/Critical" is a business concept expressed as Priority.title text,
 # not a hardcoded id - these are the exact seeded titles (see
@@ -221,7 +215,7 @@ class TicketRepository(CompanyScopedRepository[Ticket]):
     ) -> int:
         """"High/Critical open" = priority title in ('High', 'Critical')
         AND status not in the terminal set - both business concepts
-        (_HIGH_CRITICAL_PRIORITY_TITLES, _TERMINAL_STATUSES), never a
+        (_HIGH_CRITICAL_PRIORITY_TITLES, TERMINAL_TICKET_STATUSES), never a
         hardcoded id."""
         stmt = (
             select(func.count())
@@ -231,7 +225,7 @@ class TicketRepository(CompanyScopedRepository[Ticket]):
                 *self._scope_filters(created_by_user_id, assigned_technician_id),
                 Priority.company_id == self.company_id,
                 Priority.title.in_(_HIGH_CRITICAL_PRIORITY_TITLES),
-                Ticket.status.notin_(_TERMINAL_STATUSES),
+                Ticket.status.notin_(TERMINAL_TICKET_STATUSES),
             )
         )
         return self.db.scalar(stmt) or 0
