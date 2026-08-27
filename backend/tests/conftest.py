@@ -34,6 +34,7 @@ from app.models.enums import (
     InventoryCondition,
     InventoryStatus,
     InventoryTrackingType,
+    TicketInventoryUsageStatus,
     TicketStatus,
 )
 from app.models.inventory_category import InventoryCategory
@@ -543,6 +544,27 @@ class FakeInventoryItemRepository:
         self._by_id[obj.id] = obj
         return obj
 
+    # ---- analytics aggregates (mirrors InventoryItemRepository's SQL
+    # exactly in pure Python) ---------------------------------------------
+
+    def count_grouped_by_status(self) -> dict[InventoryStatus, int]:
+        counts: dict[InventoryStatus, int] = {}
+        for i in self._by_id.values():
+            if self._in_scope(i):
+                counts[i.status] = counts.get(i.status, 0) + 1
+        return counts
+
+    def count_grouped_by_category(self) -> list[tuple[str, int]]:
+        counts: dict[str, int] = {}
+        for i in self._by_id.values():
+            if (
+                self._in_scope(i)
+                and i.inventory_category is not None
+                and i.inventory_category.company_id == self.company_id
+            ):
+                counts[i.inventory_category.name] = counts.get(i.inventory_category.name, 0) + 1
+        return list(counts.items())
+
 
 class FakeTicketInventoryUsageRepository:
     """In-memory stand-in for TicketInventoryUsageRepository. Same rationale
@@ -597,6 +619,17 @@ class FakeTicketInventoryUsageRepository:
 
     def delete(self, obj: TicketInventoryUsage) -> None:
         self._by_id.pop(obj.id, None)
+
+    def count_reserved_for_technician(self, technician_id: int) -> int:
+        return sum(
+            1
+            for u in self._by_id.values()
+            if self._in_scope(u)
+            and u.status == TicketInventoryUsageStatus.RESERVED
+            and u.ticket is not None
+            and u.ticket.company_id == self.company_id
+            and u.ticket.assigned_technician_id == technician_id
+        )
 
 
 class FakeInventoryTransactionRepository:
@@ -2217,8 +2250,14 @@ def client(
 
     def _analytics_service(company_id: int = Depends(get_current_company_id)) -> AnalyticsService:
         ticket_repository.company_id = company_id
+        inventory_item_repository.company_id = company_id
+        ticket_inventory_usage_repository.company_id = company_id
         return AnalyticsService(
-            db=FakeSession(), company_id=company_id, ticket_repository=ticket_repository
+            db=FakeSession(),
+            company_id=company_id,
+            ticket_repository=ticket_repository,
+            inventory_item_repository=inventory_item_repository,
+            ticket_inventory_usage_repository=ticket_inventory_usage_repository,
         )
 
     def _comment_service(company_id: int = Depends(get_current_company_id)) -> CommentService:

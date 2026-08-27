@@ -1,7 +1,9 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.models.enums import TicketInventoryUsageStatus
 from app.models.inventory_item import InventoryItem
+from app.models.ticket import Ticket
 from app.models.ticket_inventory_usage import TicketInventoryUsage
 from app.repositories.base import CompanyScopedRepository
 
@@ -62,3 +64,26 @@ class TicketInventoryUsageRepository(CompanyScopedRepository[TicketInventoryUsag
             )
             .options(*_EAGER_OPTIONS)
         )
+
+    def count_reserved_for_technician(self, technician_id: int) -> int:
+        """Analytics aggregate: how many currently-RESERVED usage rows
+        (reserved item *lines*, not summed quantity - see
+        AnalyticsService.get_inventory_analytics's docstring for why) sit
+        on tickets assigned to this technician. Both
+        TicketInventoryUsage.company_id (denormalized from the ticket, see
+        this model's own docstring) and Ticket.company_id are checked
+        explicitly - redundant given FK integrity, but matches
+        CompanyScopedRepository's documented convention of never relying
+        on a join alone for isolation."""
+        stmt = (
+            select(func.count())
+            .select_from(TicketInventoryUsage)
+            .join(Ticket, TicketInventoryUsage.ticket_id == Ticket.id)
+            .where(
+                TicketInventoryUsage.company_id == self.company_id,
+                Ticket.company_id == self.company_id,
+                TicketInventoryUsage.status == TicketInventoryUsageStatus.RESERVED,
+                Ticket.assigned_technician_id == technician_id,
+            )
+        )
+        return self.db.scalar(stmt) or 0
