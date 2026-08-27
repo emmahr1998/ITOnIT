@@ -1,3 +1,4 @@
+from app.dependencies.analytics import get_analytics_service
 from app.dependencies.attachment import get_attachment_repository, get_attachment_service
 from app.dependencies.auth import (
     get_auth_service,
@@ -40,6 +41,7 @@ from app.dependencies.user import get_user_service
 
 __all__ = [
     "get_db",
+    "get_analytics_service",
     "get_auth_service",
     "get_current_active_user",
     "get_current_company_id",

@@ -12,6 +12,14 @@ class TicketStatus(str, enum.Enum):
     CLOSED = "CLOSED"
 
 
+# A ticket in one of these statuses is done - excluded from "open" counts
+# (TicketRepository.count_high_priority_open, schemas.analytics's
+# open_count derivation). Mirrors the frontend dashboard's own
+# openStatuses set (frontend/src/pages/DashboardPage.tsx) so "open" means
+# the same thing everywhere it's used.
+TERMINAL_TICKET_STATUSES = frozenset({TicketStatus.RESOLVED, TicketStatus.CLOSED})
+
+
 class InventoryTrackingType(str, enum.Enum):
     """Whether an InventoryItem row represents one physical, serial-numbered
     unit (SERIALIZED - a laptop, a monitor) or a SKU-level quantity of
