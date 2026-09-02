@@ -51,3 +51,13 @@ export interface InventoryItemTransactionListParams {
   skip?: number;
   limit?: number;
 }
+
+/** Query params accepted by GET /inventory-transactions (the company-wide feed). */
+export interface InventoryTransactionListParams {
+  inventory_item_id?: number;
+  ticket_id?: number;
+  transaction_type?: InventoryTransactionType;
+  performed_by_user_id?: number;
+  skip?: number;
+  limit?: number;
+}
