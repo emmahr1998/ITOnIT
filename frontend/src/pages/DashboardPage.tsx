@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
@@ -8,9 +8,12 @@ import {
   Hourglass,
   ListTodo,
   MapPin,
+  Package,
+  PackageCheck,
+  PackageMinus,
   Plus,
+  ShieldAlert,
   Tags,
-  Ticket as TicketIcon,
   Timer,
   UserCheck,
   UserCog,
@@ -19,20 +22,23 @@ import {
 } from "lucide-react";
 import { useAuth } from "../auth/useAuth";
 import { fetchAllTickets } from "../api/tickets";
-import { fetchPriorities } from "../api/priorities";
 import { fetchUsers } from "../api/users";
+import { fetchTicketAnalytics, fetchInventoryAnalytics } from "../api/analytics";
+import { fetchInventoryTransactions } from "../api/inventoryTransactions";
 import { getApiErrorMessage } from "../api/client";
 import { LoadingSpinner } from "../components/common/LoadingSpinner";
 import { ErrorMessage } from "../components/common/ErrorMessage";
 import { StatCard } from "../components/common/StatCard";
-import { BreakdownList, type BreakdownColor } from "../components/common/BreakdownList";
-import { MonthlyTrend, type MonthlyTrendPoint } from "../components/common/MonthlyTrend";
+import { BreakdownList, type BreakdownColor, type BreakdownItem } from "../components/common/BreakdownList";
+import { MonthlyTrend } from "../components/common/MonthlyTrend";
 import { SystemHealthCard } from "../components/common/SystemHealthCard";
 import { StatusBadge } from "../components/common/StatusBadge";
 import { PriorityBadge } from "../components/common/PriorityBadge";
+import { InventoryTransactionTypeBadge } from "../components/common/InventoryTransactionTypeBadge";
 import { EmptyState } from "../components/common/EmptyState";
 import type { Ticket } from "../types/ticket";
-import { getHighPriorityIds } from "../utils/highPriority";
+import type { TicketAnalyticsResponse, InventoryAnalyticsResponse } from "../types/analytics";
+import type { InventoryTransaction } from "../types/inventoryTransaction";
 import styles from "./DashboardPage.module.css";
 
 const STATUS_ORDER = ["NEW", "ASSIGNED", "IN_PROGRESS", "WAITING_FOR_EMPLOYEE", "RESOLVED", "CLOSED"];
@@ -47,179 +53,143 @@ const STATUS_COLOR: Record<string, BreakdownColor> = {
   CLOSED: "gray",
 };
 
-function isToday(isoDate: string): boolean {
-  const date = new Date(isoDate);
-  const now = new Date();
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  );
-}
+const INVENTORY_STATUS_ORDER = ["AVAILABLE", "RESERVED", "IN_USE", "IN_REPAIR", "RETIRED"];
 
-/** Formats a millisecond duration as e.g. "3.2h" or "1.4d" - whichever reads more naturally. */
-function formatDuration(ms: number): string {
-  const hours = ms / (1000 * 60 * 60);
+/** Mirrors InventoryStatusBadge's own status→color mapping (InventoryBadges.tsx). */
+const INVENTORY_STATUS_COLOR: Record<string, BreakdownColor> = {
+  AVAILABLE: "green",
+  RESERVED: "blue",
+  IN_USE: "amber",
+  IN_REPAIR: "red",
+  RETIRED: "gray",
+};
+
+/** Formats a minutes duration (as returned by the backend) as e.g. "3.2h" or "1.4d". */
+function formatResolutionTime(minutes: number): string {
+  const hours = minutes / 60;
   if (hours < 24) {
     return `${hours.toFixed(1)}h`;
   }
   return `${(hours / 24).toFixed(1)}d`;
 }
 
-/**
- * A flat superset of every count any role's dashboard might show. The
- * backend already scopes `tickets` per role (Employee = their own,
- * Technician = assigned to them, Manager/Admin = everyone), so the same
- * "openCount" field is correct for "My Open Tickets", "Assigned To Me", or
- * "Open Tickets" depending only on which role is looking at it - only the
- * card label changes, never the underlying query.
- */
-interface Stats {
-  openCount: number;
-  createdToday: number;
-  resolvedToday: number;
-  highPriorityOpen: number;
-  pendingAssignments: number;
-  inProgressCount: number;
-  waitingCount: number;
-  avgResolutionMs: number | null;
+function statusBreakdownFrom(items: { status: string; count: number }[]): BreakdownItem[] {
+  const counts = new Map(items.map((item) => [item.status, item.count]));
+  return STATUS_ORDER.filter((status) => counts.has(status)).map((status) => ({
+    label: status.replaceAll("_", " "),
+    count: counts.get(status) ?? 0,
+    color: STATUS_COLOR[status],
+  }));
 }
 
-function computeStats(tickets: Ticket[], highPriorityIds: Set<number>): Stats {
-  let openCount = 0;
-  let createdToday = 0;
-  let resolvedToday = 0;
-  let highPriorityOpen = 0;
-  let pendingAssignments = 0;
-  let inProgressCount = 0;
-  let waitingCount = 0;
-  let resolutionTotalMs = 0;
-  let resolutionCount = 0;
-
-  const openStatuses = new Set(["NEW", "ASSIGNED", "IN_PROGRESS", "WAITING_FOR_EMPLOYEE"]);
-
-  for (const ticket of tickets) {
-    const isOpen = openStatuses.has(ticket.status);
-
-    if (isOpen) {
-      openCount += 1;
-    }
-    if (isToday(ticket.created_at)) {
-      createdToday += 1;
-    }
-    // Resolved today = resolved_at is today, regardless of whether it has
-    // since also been closed - closing doesn't clear resolved_at.
-    if (ticket.resolved_at && isToday(ticket.resolved_at)) {
-      resolvedToday += 1;
-    }
-    if (isOpen && highPriorityIds.has(ticket.priority.id)) {
-      highPriorityOpen += 1;
-    }
-    if (ticket.status === "NEW" && !ticket.assigned_technician) {
-      pendingAssignments += 1;
-    }
-    if (ticket.status === "IN_PROGRESS") {
-      inProgressCount += 1;
-    }
-    if (ticket.status === "WAITING_FOR_EMPLOYEE") {
-      waitingCount += 1;
-    }
-    if (ticket.resolved_at) {
-      resolutionTotalMs += new Date(ticket.resolved_at).getTime() - new Date(ticket.created_at).getTime();
-      resolutionCount += 1;
-    }
-  }
-
-  return {
-    openCount,
-    createdToday,
-    resolvedToday,
-    highPriorityOpen,
-    pendingAssignments,
-    inProgressCount,
-    waitingCount,
-    avgResolutionMs: resolutionCount > 0 ? resolutionTotalMs / resolutionCount : null,
-  };
+function inventoryStatusBreakdownFrom(items: { status: string; count: number }[]): BreakdownItem[] {
+  const counts = new Map(items.map((item) => [item.status, item.count]));
+  return INVENTORY_STATUS_ORDER.filter((status) => counts.has(status)).map((status) => ({
+    label: status.replaceAll("_", " "),
+    count: counts.get(status) ?? 0,
+    color: INVENTORY_STATUS_COLOR[status],
+  }));
 }
 
-function computeMonthlyTrend(tickets: Ticket[]): MonthlyTrendPoint[] {
-  const months = new Map<string, { label: string; created: number; resolved: number; sortKey: number }>();
+function priorityBreakdownFrom(items: { priority: string; count: number }[]): BreakdownItem[] {
+  return [...items].sort((a, b) => b.count - a.count).map((item) => ({ label: item.priority, count: item.count }));
+}
 
-  function bucket(dateStr: string) {
-    const date = new Date(dateStr);
-    const key = `${date.getFullYear()}-${date.getMonth()}`;
-    if (!months.has(key)) {
-      months.set(key, {
-        label: date.toLocaleDateString(undefined, { month: "short", year: "2-digit" }),
-        created: 0,
-        resolved: 0,
-        sortKey: date.getFullYear() * 12 + date.getMonth(),
-      });
-    }
-    return months.get(key)!;
-  }
-
-  for (const ticket of tickets) {
-    bucket(ticket.created_at).created += 1;
-    if (ticket.resolved_at) {
-      bucket(ticket.resolved_at).resolved += 1;
-    }
-  }
-
-  return [...months.values()]
-    .sort((a, b) => a.sortKey - b.sortKey)
-    .slice(-6)
-    .map(({ label, created, resolved }) => ({ monthLabel: label, created, resolved }));
+function categoryBreakdownFrom(items: { category: string; count: number }[]): BreakdownItem[] {
+  return [...items].sort((a, b) => b.count - a.count).map((item) => ({ label: item.category, count: item.count }));
 }
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const [tickets, setTickets] = useState<Ticket[] | null>(null);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [activeTechnicians, setActiveTechnicians] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
 
   const role = user?.role;
   const isCompanyAdmin = role === "Company Administrator";
   const isTechnician = role === "Technician";
   const isEmployee = role === "Employee";
+  const canViewInventoryAnalytics = isCompanyAdmin || isTechnician;
+
+  // ---- Ticket analytics (required - powers every role's primary KPIs) ----
+  const [ticketAnalytics, setTicketAnalytics] = useState<TicketAnalyticsResponse | null>(null);
+  const [ticketAnalyticsLoading, setTicketAnalyticsLoading] = useState(true);
+  const [ticketAnalyticsError, setTicketAnalyticsError] = useState<string | null>(null);
+
+  const loadTicketAnalytics = useCallback(() => {
+    setTicketAnalyticsLoading(true);
+    setTicketAnalyticsError(null);
+    return fetchTicketAnalytics()
+      .then(setTicketAnalytics)
+      .catch((err) => setTicketAnalyticsError(getApiErrorMessage(err, "Could not load ticket analytics.")))
+      .finally(() => setTicketAnalyticsLoading(false));
+  }, []);
 
   useEffect(() => {
-    if (!user) {
-      return;
-    }
-    let cancelled = false;
+    if (!user) return;
+    loadTicketAnalytics();
+  }, [user, loadTicketAnalytics]);
 
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const [ticketList, priorities] = await Promise.all([
-          fetchAllTickets({ limit: 500 }),
-          fetchPriorities(),
-        ]);
-        if (cancelled) {
-          return;
-        }
-        setTickets(ticketList);
-        setStats(computeStats(ticketList, getHighPriorityIds(priorities)));
-      } catch (err) {
-        if (!cancelled) {
-          setError(getApiErrorMessage(err, "Could not load dashboard data."));
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
+  // ---- Inventory analytics (optional widget - Technician + Company Administrator only) ----
+  const [inventoryAnalytics, setInventoryAnalytics] = useState<InventoryAnalyticsResponse | null>(null);
+  const [inventoryAnalyticsLoading, setInventoryAnalyticsLoading] = useState(false);
+  const [inventoryAnalyticsError, setInventoryAnalyticsError] = useState<string | null>(null);
 
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+  const loadInventoryAnalytics = useCallback(() => {
+    setInventoryAnalyticsLoading(true);
+    setInventoryAnalyticsError(null);
+    return fetchInventoryAnalytics()
+      .then(setInventoryAnalytics)
+      .catch((err) => setInventoryAnalyticsError(getApiErrorMessage(err, "Could not load inventory analytics.")))
+      .finally(() => setInventoryAnalyticsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!user || !canViewInventoryAnalytics) return;
+    loadInventoryAnalytics();
+  }, [user, canViewInventoryAnalytics, loadInventoryAnalytics]);
+
+  // ---- Recent tickets (display-only, optional widget - a small limit, never used to calculate counts) ----
+  const [recentTickets, setRecentTickets] = useState<Ticket[] | null>(null);
+  const [recentTicketsLoading, setRecentTicketsLoading] = useState(false);
+  const [recentTicketsError, setRecentTicketsError] = useState<string | null>(null);
+
+  const loadRecentTickets = useCallback(() => {
+    setRecentTicketsLoading(true);
+    setRecentTicketsError(null);
+    // Employee sees their own newest tickets; Technician/Company Administrator
+    // see the most recently *updated* ones - a more useful "what's moving"
+    // view once counts no longer come from this list at all.
+    const sortBy = isEmployee ? "created_at" : "updated_at";
+    return fetchAllTickets({ sort_by: sortBy, sort_dir: "desc", limit: 5 })
+      .then(setRecentTickets)
+      .catch((err) => setRecentTicketsError(getApiErrorMessage(err, "Could not load recent tickets.")))
+      .finally(() => setRecentTicketsLoading(false));
+  }, [isEmployee]);
+
+  useEffect(() => {
+    if (!user) return;
+    loadRecentTickets();
+  }, [user, loadRecentTickets]);
+
+  // ---- Recent inventory activity (optional widget - Company Administrator only) ----
+  const [recentTransactions, setRecentTransactions] = useState<InventoryTransaction[] | null>(null);
+  const [recentTransactionsLoading, setRecentTransactionsLoading] = useState(false);
+  const [recentTransactionsError, setRecentTransactionsError] = useState<string | null>(null);
+
+  const loadRecentTransactions = useCallback(() => {
+    setRecentTransactionsLoading(true);
+    setRecentTransactionsError(null);
+    return fetchInventoryTransactions({ limit: 5 })
+      .then(setRecentTransactions)
+      .catch((err) => setRecentTransactionsError(getApiErrorMessage(err, "Could not load recent inventory activity.")))
+      .finally(() => setRecentTransactionsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!user || !isCompanyAdmin) return;
+    loadRecentTransactions();
+  }, [user, isCompanyAdmin, loadRecentTransactions]);
+
+  // ---- Active technicians (optional widget, unrelated to ticket/inventory analytics) ----
+  const [activeTechnicians, setActiveTechnicians] = useState<number | null>(null);
 
   useEffect(() => {
     if (!isCompanyAdmin) {
@@ -232,49 +202,46 @@ export function DashboardPage() {
       });
   }, [isCompanyAdmin]);
 
-  const statusBreakdown = useMemo(() => {
-    if (!tickets) return [];
-    const counts = new Map<string, number>();
-    for (const ticket of tickets) {
-      counts.set(ticket.status, (counts.get(ticket.status) ?? 0) + 1);
-    }
-    return STATUS_ORDER.filter((status) => counts.has(status)).map((status) => ({
-      label: status.replaceAll("_", " "),
-      count: counts.get(status) ?? 0,
-      color: STATUS_COLOR[status],
-    }));
-  }, [tickets]);
+  const statusBreakdown = useMemo(
+    () => (ticketAnalytics ? statusBreakdownFrom(ticketAnalytics.by_status) : []),
+    [ticketAnalytics],
+  );
+  const priorityBreakdown = useMemo(
+    () => (ticketAnalytics ? priorityBreakdownFrom(ticketAnalytics.by_priority) : []),
+    [ticketAnalytics],
+  );
+  const categoryBreakdown = useMemo(
+    () => (ticketAnalytics ? categoryBreakdownFrom(ticketAnalytics.by_category) : []),
+    [ticketAnalytics],
+  );
+  const monthlyTrend = useMemo(
+    () =>
+      ticketAnalytics
+        ? ticketAnalytics.monthly_trend.map((point) => ({
+            monthLabel: point.month,
+            created: point.created,
+            resolved: point.resolved,
+          }))
+        : [],
+    [ticketAnalytics],
+  );
 
-  const categoryBreakdown = useMemo(() => {
-    if (!tickets) return [];
-    const counts = new Map<string, number>();
-    for (const ticket of tickets) {
-      counts.set(ticket.category.name, (counts.get(ticket.category.name) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([label, count]) => ({ label, count }));
-  }, [tickets]);
-
-  const monthlyTrend = useMemo(() => (tickets ? computeMonthlyTrend(tickets) : []), [tickets]);
-
-  const recentTickets = useMemo(() => {
-    if (!tickets) return [];
-    return [...tickets]
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .slice(0, 5);
-  }, [tickets]);
+  const inventoryStatusBreakdown = useMemo(
+    () => (inventoryAnalytics?.by_status ? inventoryStatusBreakdownFrom(inventoryAnalytics.by_status) : []),
+    [inventoryAnalytics],
+  );
+  const inventoryCategoryBreakdown = useMemo(
+    () => (inventoryAnalytics?.by_category ? categoryBreakdownFrom(inventoryAnalytics.by_category) : []),
+    [inventoryAnalytics],
+  );
 
   const recentActivity = useMemo(() => {
-    if (!tickets) return [];
-    return [...tickets]
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-      .slice(0, 5)
-      .map((ticket) => ({
-        ticket,
-        justCreated: ticket.updated_at === ticket.created_at,
-      }));
-  }, [tickets]);
+    if (!recentTickets) return [];
+    return recentTickets.map((ticket) => ({
+      ticket,
+      justCreated: ticket.updated_at === ticket.created_at,
+    }));
+  }, [recentTickets]);
 
   const firstName = user?.first_name?.trim();
 
@@ -294,35 +261,47 @@ export function DashboardPage() {
         )}
       </div>
 
-      {loading && <LoadingSpinner label="Loading your tickets..." />}
-      {error && <ErrorMessage message={error} />}
+      {/* -------- Ticket analytics: KPIs, breakdowns, trend (required) -------- */}
+      {ticketAnalyticsLoading && <LoadingSpinner label="Loading your dashboard..." />}
+      {ticketAnalyticsError && !ticketAnalyticsLoading && (
+        <div className={styles.errorWrap}>
+          <ErrorMessage message={ticketAnalyticsError} />
+          <button type="button" className="btn btn-secondary btn-sm" onClick={loadTicketAnalytics}>
+            Retry
+          </button>
+        </div>
+      )}
 
-      {stats && !loading && !error && (
+      {ticketAnalytics && !ticketAnalyticsLoading && !ticketAnalyticsError && (
         <>
           {/* -------- Primary KPI row (role-specific) -------- */}
           <div className={styles.grid}>
             {isEmployee && (
               <>
-                <StatCard label="My Open Tickets" value={stats.openCount} accent="blue" icon={ListTodo} to="/tickets?view=open" />
-                <StatCard label="Created Today" value={stats.createdToday} accent="blue" icon={CalendarClock} to="/tickets?view=created-today" />
-                <StatCard label="Resolved Today" value={stats.resolvedToday} accent="green" icon={CheckCircle2} to="/tickets?view=resolved-today" />
-                <StatCard label="High Priority Tickets" value={stats.highPriorityOpen} accent="red" icon={AlertTriangle} to="/tickets?view=high-priority" />
+                <StatCard label="My Open Tickets" value={ticketAnalytics.open_count} accent="blue" icon={ListTodo} to="/tickets?view=open" />
+                <StatCard label="Created Today" value={ticketAnalytics.created_today} accent="blue" icon={CalendarClock} to="/tickets?view=created-today" />
+                <StatCard label="Resolved Today" value={ticketAnalytics.resolved_today} accent="green" icon={CheckCircle2} to="/tickets?view=resolved-today" />
+                <StatCard label="High Priority Tickets" value={ticketAnalytics.high_priority_open_count} accent="red" icon={AlertTriangle} to="/tickets?view=high-priority" />
               </>
             )}
             {isTechnician && (
               <>
-                <StatCard label="Assigned To Me" value={stats.openCount} accent="blue" icon={UserCheck} to="/tickets?view=open" />
-                <StatCard label="In Progress" value={stats.inProgressCount} accent="amber" icon={Hourglass} to="/tickets?status=IN_PROGRESS" />
-                <StatCard label="Waiting for Employee" value={stats.waitingCount} accent="amber" icon={Clock} to="/tickets?status=WAITING_FOR_EMPLOYEE" />
-                <StatCard label="Resolved Today" value={stats.resolvedToday} accent="green" icon={CheckCircle2} to="/tickets?view=resolved-today" />
+                <StatCard label="Assigned To Me" value={ticketAnalytics.open_count} accent="blue" icon={UserCheck} to="/tickets?view=open" />
+                <StatCard label="In Progress" value={ticketAnalytics.in_progress_count} accent="amber" icon={Hourglass} to="/tickets?status=IN_PROGRESS" />
+                <StatCard label="Waiting for Employee" value={ticketAnalytics.waiting_for_employee_count} accent="amber" icon={Clock} to="/tickets?status=WAITING_FOR_EMPLOYEE" />
+                <StatCard label="High Priority Tickets" value={ticketAnalytics.high_priority_open_count} accent="red" icon={AlertTriangle} to="/tickets?view=high-priority" />
+                <StatCard label="Resolved Today" value={ticketAnalytics.resolved_today} accent="green" icon={CheckCircle2} to="/tickets?view=resolved-today" />
               </>
             )}
             {isCompanyAdmin && (
               <>
-                <StatCard label="Open Tickets" value={stats.openCount} accent="blue" icon={ListTodo} to="/tickets?view=open" />
-                <StatCard label="Pending Assignments" value={stats.pendingAssignments} accent="amber" icon={UserCog} to="/tickets?view=unassigned" />
-                <StatCard label="High Priority Tickets" value={stats.highPriorityOpen} accent="red" icon={AlertTriangle} to="/tickets?view=high-priority" />
-                <StatCard label="Created Today" value={stats.createdToday} accent="blue" icon={CalendarClock} to="/tickets?view=created-today" />
+                <StatCard label="Open Tickets" value={ticketAnalytics.open_count} accent="blue" icon={ListTodo} to="/tickets?view=open" />
+                <StatCard label="In Progress" value={ticketAnalytics.in_progress_count} accent="amber" icon={Hourglass} to="/tickets?status=IN_PROGRESS" />
+                <StatCard label="Waiting for Employee" value={ticketAnalytics.waiting_for_employee_count} accent="amber" icon={Clock} to="/tickets?status=WAITING_FOR_EMPLOYEE" />
+                <StatCard label="Pending Assignments" value={ticketAnalytics.unassigned_count ?? 0} accent="amber" icon={UserCog} to="/tickets?view=unassigned" />
+                <StatCard label="High Priority Tickets" value={ticketAnalytics.high_priority_open_count} accent="red" icon={AlertTriangle} to="/tickets?view=high-priority" />
+                <StatCard label="Created Today" value={ticketAnalytics.created_today} accent="blue" icon={CalendarClock} to="/tickets?view=created-today" />
+                <StatCard label="Resolved Today" value={ticketAnalytics.resolved_today} accent="green" icon={CheckCircle2} to="/tickets?view=resolved-today" />
               </>
             )}
           </div>
@@ -333,7 +312,7 @@ export function DashboardPage() {
               <StatCard label="Active Technicians" value={activeTechnicians ?? "—"} accent="blue" icon={UsersIcon} size="sm" />
               <StatCard
                 label="Avg. Resolution Time"
-                value={stats.avgResolutionMs !== null ? formatDuration(stats.avgResolutionMs) : "Not enough data"}
+                value={ticketAnalytics.avg_resolution_minutes !== null ? formatResolutionTime(ticketAnalytics.avg_resolution_minutes) : "Not enough data"}
                 accent="green"
                 icon={Timer}
                 size="sm"
@@ -341,144 +320,256 @@ export function DashboardPage() {
             </div>
           )}
 
-          {/* -------- Breakdown charts -------- */}
+          {/* -------- Ticket breakdown charts -------- */}
           <div className={styles.breakdownGrid}>
             <BreakdownList title="Tickets by Status" items={statusBreakdown} />
             {!isTechnician && <BreakdownList title="Tickets by Category" items={categoryBreakdown} />}
+            {isCompanyAdmin && <BreakdownList title="Tickets by Priority" items={priorityBreakdown} />}
           </div>
 
           {isCompanyAdmin && <MonthlyTrend points={monthlyTrend} />}
-
-          {/* -------- Recent Activity + Quick Actions (Company Administrator) -------- */}
-          {isCompanyAdmin && (
-            <div className={styles.splitGrid}>
-              <div className={styles.recentCard}>
-                <div className={styles.recentHeader}>
-                  <h2 className={styles.recentTitle}>Recent Activity</h2>
-                </div>
-                {recentActivity.length === 0 ? (
-                  <EmptyState message="No activity yet." />
-                ) : (
-                  <ul className="timelineList">
-                    {recentActivity.map(({ ticket, justCreated }) => (
-                      <li key={ticket.id} className="timelineItem">
-                        <span className="timelineDot" aria-hidden="true" />
-                        <Link
-                          to={`/tickets/${ticket.id}`}
-                          className={styles.activityLink}
-                          aria-label={`Open ticket ${ticket.ticket_number}`}
-                        >
-                          <span className={styles.activityText}>
-                            <strong>{ticket.ticket_number}</strong>{" "}
-                            {justCreated ? "was created" : `was updated · now ${ticket.status.replaceAll("_", " ")}`}
-                          </span>
-                          <span className={styles.activityTime}>
-                            {new Date(ticket.updated_at).toLocaleString()}
-                          </span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              <div className={styles.recentCard}>
-                <div className={styles.recentHeader}>
-                  <h2 className={styles.recentTitle}>Quick Actions</h2>
-                </div>
-                <div className={styles.quickActions}>
-                  <Link to="/tickets/new" className={styles.quickAction}>
-                    <span className={styles.quickActionIcon}>
-                      <Plus size={16} />
-                    </span>
-                    Create Ticket
-                  </Link>
-                  {isCompanyAdmin && (
-                    <>
-                      <Link to="/admin/users?create=1" className={styles.quickAction}>
-                        <span className={styles.quickActionIcon}>
-                          <UserPlus size={16} />
-                        </span>
-                        Create User
-                      </Link>
-                      <Link to="/admin/departments?create=1" className={styles.quickAction}>
-                        <span className={styles.quickActionIcon}>
-                          <UsersIcon size={16} />
-                        </span>
-                        Add Department
-                      </Link>
-                      <Link to="/admin/categories?create=1" className={styles.quickAction}>
-                        <span className={styles.quickActionIcon}>
-                          <Tags size={16} />
-                        </span>
-                        Add Category
-                      </Link>
-                      <Link to="/admin/locations?create=1" className={styles.quickAction}>
-                        <span className={styles.quickActionIcon}>
-                          <MapPin size={16} />
-                        </span>
-                        Add Location
-                      </Link>
-                    </>
-                  )}
-                  {!isCompanyAdmin && (
-                    <Link to="/tickets" className={styles.quickAction}>
-                      <span className={styles.quickActionIcon}>
-                        <TicketIcon size={16} />
-                      </span>
-                      View All Tickets
-                    </Link>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* -------- Recent Tickets (Employee/Technician) -------- */}
-          {(isEmployee || isTechnician) && (
-            <div className={styles.recentCard}>
-              <div className={styles.recentHeader}>
-                <h2 className={styles.recentTitle}>
-                  {isTechnician ? "Recent Assigned Tickets" : "Recent Tickets"}
-                </h2>
-                <Link to="/tickets" className="btn btn-ghost btn-sm">
-                  View all
-                </Link>
-              </div>
-              {recentTickets.length === 0 ? (
-                <EmptyState
-                  mascot
-                  title="No tickets yet"
-                  description="Once tickets are created, the latest ones will show up here."
-                />
-              ) : (
-                <ul className={styles.recentList}>
-                  {recentTickets.map((ticket) => (
-                    <li key={ticket.id}>
-                      <Link
-                        to={`/tickets/${ticket.id}`}
-                        className={styles.recentRow}
-                        aria-label={`Open ticket ${ticket.ticket_number}: ${ticket.title}`}
-                      >
-                        <div className={styles.recentMain}>
-                          <span className={styles.recentNumber}>{ticket.ticket_number}</span>
-                          <span className={styles.recentTicketTitle}>{ticket.title}</span>
-                        </div>
-                        <div className={styles.recentMeta}>
-                          <PriorityBadge priority={ticket.priority} />
-                          <StatusBadge status={ticket.status} />
-                        </div>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {isCompanyAdmin && <SystemHealthCard />}
         </>
       )}
+
+      {/* -------- Inventory analytics (Company Administrator: full picture) -------- */}
+      {isCompanyAdmin && (
+        <>
+          {inventoryAnalyticsLoading && <LoadingSpinner label="Loading inventory analytics..." />}
+          {inventoryAnalyticsError && !inventoryAnalyticsLoading && (
+            <div className={styles.errorWrap}>
+              <ErrorMessage message={inventoryAnalyticsError} />
+              <button type="button" className="btn btn-secondary btn-sm" onClick={loadInventoryAnalytics}>
+                Retry
+              </button>
+            </div>
+          )}
+          {inventoryAnalytics && !inventoryAnalyticsLoading && !inventoryAnalyticsError && (
+            <>
+              <div className={styles.secondaryGrid}>
+                <StatCard label="Total Inventory Items" value={inventoryAnalytics.total_items ?? 0} accent="blue" icon={Package} size="sm" />
+                <StatCard label="Low Stock" value={inventoryAnalytics.low_stock_count ?? 0} accent="amber" icon={PackageMinus} size="sm" />
+                <StatCard label="Warranty Expiring" value={inventoryAnalytics.warranty_expiring_count ?? 0} accent="red" icon={ShieldAlert} size="sm" />
+              </div>
+              <div className={styles.breakdownGrid}>
+                <BreakdownList title="Inventory by Status" items={inventoryStatusBreakdown} />
+                <BreakdownList title="Inventory by Category" items={inventoryCategoryBreakdown} />
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* -------- Inventory Reserved (Technician only) - never the company-wide dataset -------- */}
+      {isTechnician && (
+        <>
+          {inventoryAnalyticsLoading && <LoadingSpinner label="Loading inventory analytics..." />}
+          {inventoryAnalyticsError && !inventoryAnalyticsLoading && (
+            <div className={styles.errorWrap}>
+              <ErrorMessage message={inventoryAnalyticsError} />
+              <button type="button" className="btn btn-secondary btn-sm" onClick={loadInventoryAnalytics}>
+                Retry
+              </button>
+            </div>
+          )}
+          {inventoryAnalytics && !inventoryAnalyticsLoading && !inventoryAnalyticsError && (
+            <div className={styles.secondaryGrid}>
+              <StatCard
+                label="Inventory Reserved"
+                value={inventoryAnalytics.reserved_for_my_tickets_count ?? 0}
+                accent="blue"
+                icon={PackageCheck}
+                size="sm"
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* -------- Recent Activity + Recent Inventory Activity + Quick Actions (Company Administrator) -------- */}
+      {isCompanyAdmin && (
+        <div className={styles.splitGrid}>
+          <div className={styles.recentCard}>
+            <div className={styles.recentHeader}>
+              <h2 className={styles.recentTitle}>Recent Activity</h2>
+            </div>
+            {recentTicketsLoading && <LoadingSpinner label="Loading recent activity..." />}
+            {recentTicketsError && !recentTicketsLoading && (
+              <div className={styles.errorWrap}>
+                <ErrorMessage message={recentTicketsError} />
+                <button type="button" className="btn btn-secondary btn-sm" onClick={loadRecentTickets}>
+                  Retry
+                </button>
+              </div>
+            )}
+            {!recentTicketsLoading && !recentTicketsError && recentActivity.length === 0 && (
+              <EmptyState message="No activity yet." />
+            )}
+            {!recentTicketsLoading && !recentTicketsError && recentActivity.length > 0 && (
+              <ul className="timelineList">
+                {recentActivity.map(({ ticket, justCreated }) => (
+                  <li key={ticket.id} className="timelineItem">
+                    <span className="timelineDot" aria-hidden="true" />
+                    <Link
+                      to={`/tickets/${ticket.id}`}
+                      className={styles.activityLink}
+                      aria-label={`Open ticket ${ticket.ticket_number}`}
+                    >
+                      <span className={styles.activityText}>
+                        <strong>{ticket.ticket_number}</strong>{" "}
+                        {justCreated ? "was created" : `was updated · now ${ticket.status.replaceAll("_", " ")}`}
+                      </span>
+                      <span className={styles.activityTime}>
+                        {new Date(ticket.updated_at).toLocaleString()}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className={styles.recentCard}>
+            <div className={styles.recentHeader}>
+              <h2 className={styles.recentTitle}>Recent Inventory Activity</h2>
+            </div>
+            {recentTransactionsLoading && <LoadingSpinner label="Loading inventory activity..." />}
+            {recentTransactionsError && !recentTransactionsLoading && (
+              <div className={styles.errorWrap}>
+                <ErrorMessage message={recentTransactionsError} />
+                <button type="button" className="btn btn-secondary btn-sm" onClick={loadRecentTransactions}>
+                  Retry
+                </button>
+              </div>
+            )}
+            {!recentTransactionsLoading && !recentTransactionsError && recentTransactions?.length === 0 && (
+              <EmptyState message="No inventory activity yet." />
+            )}
+            {!recentTransactionsLoading && !recentTransactionsError && recentTransactions && recentTransactions.length > 0 && (
+              <ul className={styles.recentList}>
+                {recentTransactions.map((txn) => (
+                  <li key={txn.id}>
+                    <div className={styles.recentRow}>
+                      <div className={styles.recentMain}>
+                        <InventoryTransactionTypeBadge transactionType={txn.transaction_type} />
+                        <span className={styles.recentTicketTitle}>
+                          {txn.inventory_item.name}
+                          {" · "}
+                          {txn.performed_by.first_name} {txn.performed_by.last_name}
+                          {txn.ticket && (
+                            <>
+                              {" · "}
+                              <Link to={`/tickets/${txn.ticket.id}`}>{txn.ticket.ticket_number}</Link>
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      <span className={styles.activityTime}>{new Date(txn.created_at).toLocaleString()}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className={styles.recentCard}>
+            <div className={styles.recentHeader}>
+              <h2 className={styles.recentTitle}>Quick Actions</h2>
+            </div>
+            <div className={styles.quickActions}>
+              <Link to="/tickets/new" className={styles.quickAction}>
+                <span className={styles.quickActionIcon}>
+                  <Plus size={16} />
+                </span>
+                Create Ticket
+              </Link>
+              <Link to="/admin/users?create=1" className={styles.quickAction}>
+                <span className={styles.quickActionIcon}>
+                  <UserPlus size={16} />
+                </span>
+                Create User
+              </Link>
+              <Link to="/admin/departments?create=1" className={styles.quickAction}>
+                <span className={styles.quickActionIcon}>
+                  <UsersIcon size={16} />
+                </span>
+                Add Department
+              </Link>
+              <Link to="/admin/categories?create=1" className={styles.quickAction}>
+                <span className={styles.quickActionIcon}>
+                  <Tags size={16} />
+                </span>
+                Add Category
+              </Link>
+              <Link to="/admin/locations?create=1" className={styles.quickAction}>
+                <span className={styles.quickActionIcon}>
+                  <MapPin size={16} />
+                </span>
+                Add Location
+              </Link>
+              <Link to="/admin/inventory" className={styles.quickAction}>
+                <span className={styles.quickActionIcon}>
+                  <Package size={16} />
+                </span>
+                Manage Inventory
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* -------- Recent Tickets (Employee/Technician) -------- */}
+      {(isEmployee || isTechnician) && (
+        <div className={styles.recentCard}>
+          <div className={styles.recentHeader}>
+            <h2 className={styles.recentTitle}>
+              {isTechnician ? "Recently Updated Tickets" : "Recent Tickets"}
+            </h2>
+            <Link to="/tickets" className="btn btn-ghost btn-sm">
+              View all
+            </Link>
+          </div>
+          {recentTicketsLoading && <LoadingSpinner label="Loading recent tickets..." />}
+          {recentTicketsError && !recentTicketsLoading && (
+            <div className={styles.errorWrap}>
+              <ErrorMessage message={recentTicketsError} />
+              <button type="button" className="btn btn-secondary btn-sm" onClick={loadRecentTickets}>
+                Retry
+              </button>
+            </div>
+          )}
+          {!recentTicketsLoading && !recentTicketsError && recentTickets?.length === 0 && (
+            <EmptyState
+              mascot
+              title="No tickets yet"
+              description="Once tickets are created, the latest ones will show up here."
+            />
+          )}
+          {!recentTicketsLoading && !recentTicketsError && recentTickets && recentTickets.length > 0 && (
+            <ul className={styles.recentList}>
+              {recentTickets.map((ticket) => (
+                <li key={ticket.id}>
+                  <Link
+                    to={`/tickets/${ticket.id}`}
+                    className={styles.recentRow}
+                    aria-label={`Open ticket ${ticket.ticket_number}: ${ticket.title}`}
+                  >
+                    <div className={styles.recentMain}>
+                      <span className={styles.recentNumber}>{ticket.ticket_number}</span>
+                      <span className={styles.recentTicketTitle}>{ticket.title}</span>
+                    </div>
+                    <div className={styles.recentMeta}>
+                      <PriorityBadge priority={ticket.priority} />
+                      <StatusBadge status={ticket.status} />
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {isCompanyAdmin && <SystemHealthCard />}
     </div>
   );
 }
