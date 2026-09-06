@@ -20,6 +20,7 @@ from app.dependencies.inventory_category import get_inventory_category_service
 from app.dependencies.inventory_item import get_inventory_item_service
 from app.dependencies.inventory_transaction import get_inventory_transaction_service
 from app.dependencies.location import get_location_service
+from app.dependencies.platform import get_platform_service
 from app.dependencies.priority import get_priority_service
 from app.dependencies.ticket import get_ticket_service
 from app.dependencies.ticket_inventory import get_ticket_inventory_service
@@ -59,6 +60,7 @@ from app.services.inventory_category_service import InventoryCategoryService
 from app.services.inventory_item_service import InventoryItemService
 from app.services.inventory_transaction_service import InventoryTransactionService
 from app.services.location_service import LocationService
+from app.services.platform_service import PlatformService
 from app.services.priority_service import PriorityService
 from app.services.ticket_inventory_service import TicketInventoryService
 from app.services.ticket_service import TicketService
@@ -239,6 +241,11 @@ class FakeUserRepository:
             )
         )
 
+    def count_all_tenant_users(self) -> int:
+        """Mirrors UserRepository.count_all_tenant_users - ignores
+        self.company_id/_in_scope entirely, same as the real method."""
+        return sum(1 for u in self._by_id.values() if u.company_id is not None)
+
     def create(self, obj: User) -> User:
         obj.id = self._id_seq[0]
         self._id_seq[0] += 1
@@ -296,6 +303,50 @@ class FakeCompanyRepository:
         obj.updated_at = datetime.now(timezone.utc)
         self._by_id[obj.id] = obj
         return obj
+
+    # ---- platform admin read surface (Milestone 8, Phase 8.1) - mirrors
+    # CompanyRepository.get_with_filters/count_with_filters exactly --------
+
+    _SORT_KEYS: dict[str, Callable[[Company], object]] = {
+        "created_at": lambda c: c.created_at,
+        "name": lambda c: c.name.lower(),
+        "company_code": lambda c: c.company_code.lower(),
+    }
+
+    def _filtered(
+        self, *, search: str | None = None, is_active: bool | None = None
+    ) -> list[Company]:
+        results = list(self._by_id.values())
+        if is_active is not None:
+            results = [c for c in results if c.is_active == is_active]
+        if search:
+            needle = search.strip().lower()
+            results = [
+                c
+                for c in results
+                if needle in c.name.lower() or needle in c.company_code.lower()
+            ]
+        return results
+
+    def get_with_filters(
+        self,
+        *,
+        search: str | None = None,
+        is_active: bool | None = None,
+        sort_by: str = "created_at",
+        sort_dir: str = "desc",
+        skip: int = 0,
+        limit: int = 100,
+    ) -> list[Company]:
+        results = self._filtered(search=search, is_active=is_active)
+        key_fn = self._SORT_KEYS.get(sort_by, self._SORT_KEYS["created_at"])
+        results = sorted(results, key=key_fn, reverse=(sort_dir != "asc"))
+        return results[skip : skip + limit]
+
+    def count_with_filters(
+        self, *, search: str | None = None, is_active: bool | None = None
+    ) -> int:
+        return len(self._filtered(search=search, is_active=is_active))
 
 
 class FakeCategoryRepository:
@@ -961,6 +1012,11 @@ class FakeTicketRepository:
             if t.ticket_number.startswith(prefix) and self._in_scope(t)
         )
 
+    def count_total(self) -> int:
+        """Mirrors TicketRepository.count_total - bare company-scoped
+        count, used by the platform admin's company-detail aggregate."""
+        return sum(1 for t in self._by_id.values() if self._in_scope(t))
+
     # ---- analytics aggregates (mirrors TicketRepository's SQL exactly in
     # pure Python) --------------------------------------------------------
 
@@ -1242,6 +1298,33 @@ def system_administrator_role() -> Role:
     return Role(
         id=4, name="System Administrator", description="Platform-level access; not yet in use"
     )
+
+
+@pytest.fixture
+def active_system_administrator_user(system_administrator_role: Role) -> User:
+    """The one platform-level user: company_id=None, company=None - exactly
+    the shape get_current_active_user/get_current_company_id expect for a
+    System Administrator (Milestone 8, Phase 8.1 has no login/bootstrap
+    yet, so this fixture is only ever reached via auth_headers(), never
+    through a real login flow)."""
+    now = datetime.now(timezone.utc)
+    user = User(
+        id=999,
+        company_id=None,
+        username="platform_admin",
+        first_name="Pat",
+        last_name="Admin",
+        email="platform_admin@itonit.test",
+        password_hash=hash_password("PlatformAdminPass1!"),
+        role_id=system_administrator_role.id,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    user.role = system_administrator_role
+    user.department = None
+    user.company = None
+    return user
 
 
 @pytest.fixture
@@ -1886,11 +1969,14 @@ def user_repository(
     company_b_admin_user: User,
     company_b_technician_user: User,
     company_b_employee_user: User,
+    active_system_administrator_user: User,
 ) -> FakeUserRepository:
     # Unscoped (company_id=None) - both companies' users physically coexist
     # here, exactly as they would in one real `users` table. Scoping is
     # applied per-request, not by excluding rows at fixture time (see the
-    # client fixture's _user_service override).
+    # client fixture's _user_service override). active_system_administrator_user
+    # is the one row with company_id=None - present here (not in a separate
+    # repository) for the same reason: one real `users` table has it too.
     return FakeUserRepository(
         [
             active_admin_user,
@@ -1903,6 +1989,7 @@ def user_repository(
             company_b_admin_user,
             company_b_technician_user,
             company_b_employee_user,
+            active_system_administrator_user,
         ]
     )
 
@@ -2248,6 +2335,30 @@ def client(
             ticket_inventory_service=_make_ticket_inventory_service(company_id),
         )
 
+    def _platform_service() -> PlatformService:
+        # No get_current_company_id here at all, matching the real
+        # get_platform_service - PlatformService is never scoped to a
+        # caller's own company. Target-company repositories are the same
+        # shared fakes every other override mutates .company_id on
+        # in-place; safe for the same reason documented at the top of this
+        # fixture (one request in flight at a time).
+        def _ticket_repository_for(company_id: int) -> FakeTicketRepository:
+            ticket_repository.company_id = company_id
+            return ticket_repository
+
+        def _inventory_item_repository_for(company_id: int) -> FakeInventoryItemRepository:
+            inventory_item_repository.company_id = company_id
+            return inventory_item_repository
+
+        return PlatformService(
+            db=FakeSession(),
+            company_repository=company_repository,
+            platform_user_repository=user_repository,
+            user_repository_factory=lambda company_id: user_repository.scoped(company_id),
+            ticket_repository_factory=_ticket_repository_for,
+            inventory_item_repository_factory=_inventory_item_repository_for,
+        )
+
     def _analytics_service(company_id: int = Depends(get_current_company_id)) -> AnalyticsService:
         ticket_repository.company_id = company_id
         inventory_item_repository.company_id = company_id
@@ -2308,6 +2419,7 @@ def client(
     app.dependency_overrides[get_comment_service] = _comment_service
     app.dependency_overrides[get_history_service] = _history_service
     app.dependency_overrides[get_attachment_service] = _attachment_service
+    app.dependency_overrides[get_platform_service] = _platform_service
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

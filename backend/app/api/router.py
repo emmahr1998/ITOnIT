@@ -12,6 +12,7 @@ from app.api.routes import (
     inventory_items,
     inventory_transactions,
     locations,
+    platform,
     priorities,
     tickets,
     users,
@@ -33,3 +34,4 @@ api_router.include_router(users.router)
 api_router.include_router(tickets.flat_router)
 api_router.include_router(tickets.router)
 api_router.include_router(attachments.router)
+api_router.include_router(platform.router)
