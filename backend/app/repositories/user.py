@@ -152,3 +152,15 @@ class UserRepository(BaseRepository[User]):
             role_id=role_id, department_id=department_id, is_active=is_active, search=search
         )
         return self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+
+    def count_all_tenant_users(self) -> int:
+        """Platform-only cross-tenant aggregate (Milestone 8, Phase 8.1):
+        every user that belongs to a company, across every company at once -
+        deliberately ignores this repository's own construction-time
+        company_id/_scope() entirely (call this on an unscoped
+        UserRepository(db), the same instance get_current_user resolves
+        identity through). Excludes the single System Administrator account
+        (company_id IS NULL), which is a platform-level user, not a tenant
+        one - see PlatformService.get_overview."""
+        stmt = select(func.count()).select_from(User).where(User.company_id.isnot(None))
+        return self.db.scalar(stmt) or 0

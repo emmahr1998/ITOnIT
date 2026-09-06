@@ -27,6 +27,7 @@ from app.dependencies.inventory_transaction import (
     get_inventory_transaction_service,
 )
 from app.dependencies.location import get_location_repository, get_location_service
+from app.dependencies.platform import get_platform_service
 from app.dependencies.priority import get_priority_repository, get_priority_service
 from app.dependencies.ticket import (
     get_ticket_repository,
@@ -67,6 +68,7 @@ __all__ = [
     "get_inventory_transaction_service",
     "get_location_repository",
     "get_location_service",
+    "get_platform_service",
     "get_priority_repository",
     "get_priority_service",
     "get_ticket_repository",

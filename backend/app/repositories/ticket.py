@@ -127,6 +127,20 @@ class TicketRepository(CompanyScopedRepository[Ticket]):
             or 0
         )
 
+    def count_total(self) -> int:
+        """Bare company-scoped ticket count, with no status/priority/category
+        filtering - used by the platform admin's company-detail aggregate
+        (see PlatformService.get_company_detail). Every method above/below
+        this one filters or groups; this is the one plain total."""
+        return (
+            self.db.scalar(
+                select(func.count())
+                .select_from(Ticket)
+                .where(Ticket.company_id == self.company_id)
+            )
+            or 0
+        )
+
     # ---- analytics aggregates --------------------------------------------
     #
     # Every method below takes the same optional (created_by_user_id,
