@@ -246,6 +246,23 @@ class FakeUserRepository:
         self.company_id/_in_scope entirely, same as the real method."""
         return sum(1 for u in self._by_id.values() if u.company_id is not None)
 
+    def get_platform_administrator(self, identifier: str) -> User | None:
+        """Mirrors UserRepository.get_platform_administrator - the one
+        lookup restricted to company_id IS NULL, ignoring self.company_id/
+        _in_scope entirely (same as count_all_tenant_users), matching
+        either username or email. A tenant user's username/email must
+        never match here, no matter how this fake was constructed."""
+        target = identifier.strip().lower()
+        return next(
+            (
+                u
+                for u in self._by_id.values()
+                if u.company_id is None
+                and (u.username.lower() == target or u.email.lower() == target)
+            ),
+            None,
+        )
+
     def create(self, obj: User) -> User:
         obj.id = self._id_seq[0]
         self._id_seq[0] += 1
@@ -1304,9 +1321,10 @@ def system_administrator_role() -> Role:
 def active_system_administrator_user(system_administrator_role: Role) -> User:
     """The one platform-level user: company_id=None, company=None - exactly
     the shape get_current_active_user/get_current_company_id expect for a
-    System Administrator (Milestone 8, Phase 8.1 has no login/bootstrap
-    yet, so this fixture is only ever reached via auth_headers(), never
-    through a real login flow)."""
+    System Administrator. Used both via auth_headers() (a JWT built
+    directly, for Phase 8.1/8.2 tests that don't care about login itself)
+    and via a real POST /platform/login call with this fixture's own
+    plaintext password below (Phase 8.3's login tests)."""
     now = datetime.now(timezone.utc)
     user = User(
         id=999,

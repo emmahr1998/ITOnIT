@@ -153,6 +153,38 @@ class UserRepository(BaseRepository[User]):
         )
         return self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
+    def get_platform_administrator(self, identifier: str) -> User | None:
+        """The one lookup scoped to company_id IS NULL - resolves only the
+        single platform-level System Administrator account, never a tenant
+        user (Milestone 8, Phase 8.3). Deliberately a dedicated method
+        rather than reusing get_by_username()/get_by_email() (both fall
+        back to this instance's own construction-time company_id, or
+        search *every* tenant when unscoped - see this class's own
+        docstring) or get_by_username_or_email() (which requires a
+        specific company_id): none of those can express "only the
+        company-less account" safely, and reusing one of them for platform
+        login would let a same-named tenant user's credentials match.
+        Matches either username or email, case-insensitively, same
+        convention as get_by_username_or_email. Used by both
+        AuthService.authenticate_platform_administrator (login) and
+        seed_initial_data._seed_platform_administrator (idempotency
+        check) - always call this on an unscoped UserRepository(db),
+        though this method ignores self.company_id/_scope() entirely
+        regardless, the same way count_all_tenant_users does.
+        """
+        normalized = identifier.strip().lower()
+        return self.db.scalar(
+            select(User)
+            .where(
+                User.company_id.is_(None),
+                or_(
+                    func.lower(User.username) == normalized,
+                    func.lower(User.email) == normalized,
+                ),
+            )
+            .options(*_EAGER_OPTIONS)
+        )
+
     def count_all_tenant_users(self) -> int:
         """Platform-only cross-tenant aggregate (Milestone 8, Phase 8.1):
         every user that belongs to a company, across every company at once -

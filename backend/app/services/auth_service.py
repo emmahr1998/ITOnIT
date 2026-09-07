@@ -52,6 +52,13 @@ class InvalidRefreshTokenError(Exception):
     """
 
 
+# The one role authenticate_platform_administrator ever accepts - see that
+# method's own docstring for why this check exists even though
+# UserRepository.get_platform_administrator's own WHERE clause (company_id
+# IS NULL) already restricts the lookup to the platform account.
+_SYSTEM_ADMINISTRATOR_ROLE_NAME = "System Administrator"
+
+
 class AuthService:
     """Coordinates the login and refresh flows, and issues tokens on behalf
     of company registration (see CompanyService.register_company): locate
@@ -106,6 +113,35 @@ class AuthService:
         if not user.is_active:
             raise InvalidCredentialsError
         return user
+
+    def authenticate_platform_administrator(self, identifier: str, password: str) -> User:
+        """POST /platform/login's lookup (Milestone 8, Phase 8.3). Same
+        non-disclosure contract as authenticate(): unknown identifier,
+        wrong password, an inactive platform account, and - critically -
+        an identifier that belongs to a real tenant user rather than the
+        platform account, all collapse into the identical
+        InvalidCredentialsError. Never falls back to any other lookup if
+        get_platform_administrator returns nothing; that method's own
+        company_id IS NULL restriction is what makes this safe to call
+        with a tenant user's username/email without ever matching one.
+        """
+        user = self._user_repository.get_platform_administrator(identifier)
+        if user is None or not verify_password(password, user.password_hash):
+            raise InvalidCredentialsError
+        if not user.is_active:
+            raise InvalidCredentialsError
+        if user.role.name != _SYSTEM_ADMINISTRATOR_ROLE_NAME:
+            # Defense in depth only - get_platform_administrator's own
+            # WHERE clause already guarantees this can't happen today.
+            raise InvalidCredentialsError
+        return user
+
+    def login_platform_administrator(self, identifier: str, password: str) -> TokenResponse:
+        """Authenticate the platform-level System Administrator then issue
+        a token pair - the platform equivalent of login(), with no company
+        to resolve at all."""
+        user = self.authenticate_platform_administrator(identifier, password)
+        return self.issue_tokens(user)
 
     def issue_tokens(self, user: User) -> TokenResponse:
         return TokenResponse(

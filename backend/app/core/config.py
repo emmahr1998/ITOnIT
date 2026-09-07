@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     INITIAL_ADMIN_FIRST_NAME: Optional[str] = None
     INITIAL_ADMIN_LAST_NAME: Optional[str] = None
 
+    # Optional: used only by app.scripts.seed_initial_data, to bootstrap the
+    # one platform-level System Administrator account (company_id=NULL,
+    # Milestone 8 Phase 8.3). Creation is skipped entirely when email/
+    # password are unset - same convention as INITIAL_ADMIN_* above, kept
+    # as a fully separate pair of settings since this is a platform-wide
+    # account, not a per-company one.
+    PLATFORM_ADMIN_EMAIL: Optional[str] = None
+    PLATFORM_ADMIN_PASSWORD: Optional[str] = None
+    PLATFORM_ADMIN_FIRST_NAME: Optional[str] = None
+    PLATFORM_ADMIN_LAST_NAME: Optional[str] = None
+
     # Attachments: files live on disk under this path, never in SQL Server.
     ATTACHMENT_STORAGE_PATH: str = "storage/attachments"
     MAX_ATTACHMENT_SIZE_BYTES: int = 10 * 1024 * 1024

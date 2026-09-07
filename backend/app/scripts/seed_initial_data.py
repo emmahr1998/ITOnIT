@@ -1,5 +1,6 @@
 """Idempotent bootstrap script: seed roles, the Default Company's priorities,
-and an optional initial admin user.
+an optional initial admin user, and an optional platform-level System
+Administrator account.
 
 Run with:
     python -m app.scripts.seed_initial_data
@@ -38,12 +39,12 @@ from app.repositories.role import RoleRepository
 from app.repositories.user import UserRepository
 
 # Per docs/database-design.md section 3 ("Roles Table" initial records).
-# System Administrator is seeded here as a role only - no user is created
-# for it (see the role-consolidation migration's docstring for why); the
-# account and its /platform/* routes arrive with the Platform Admin Console
-# milestone.
+# System Administrator is always seeded as a role; its one platform-level
+# user (company_id=NULL) is seeded separately, conditionally, by
+# _seed_platform_administrator below - see that function's own docstring.
 ROLE_NAMES = ["Employee", "Technician", "Company Administrator", "System Administrator"]
 ADMIN_ROLE_NAME = "Company Administrator"
+PLATFORM_ADMIN_ROLE_NAME = "System Administrator"
 
 # Same default priorities the priorities-table migration seeds - listed
 # again here so a fresh/rolled-back database is still left in a usable
@@ -119,6 +120,53 @@ def _seed_admin_user(
     print(f"Created admin user: {settings.INITIAL_ADMIN_EMAIL} (username: {username})")
 
 
+def _seed_platform_administrator(
+    user_repository: UserRepository, role_repository: RoleRepository
+) -> None:
+    """Bootstraps the single platform-level System Administrator account
+    (company_id=NULL) - Milestone 8, Phase 8.3. Idempotent by email,
+    exactly like _seed_admin_user, but the idempotency check and the
+    created row are both scoped to company_id IS NULL via
+    UserRepository.get_platform_administrator, never to a specific
+    company. ``user_repository`` must be unscoped (UserRepository(db)),
+    never constructed with a company_id - main() below passes the same
+    kind of unscoped instance get_current_user resolves identity through.
+    """
+    if not settings.PLATFORM_ADMIN_EMAIL or not settings.PLATFORM_ADMIN_PASSWORD:
+        print(
+            "Skipping platform administrator creation: "
+            "PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD not set."
+        )
+        return
+
+    if user_repository.get_platform_administrator(settings.PLATFORM_ADMIN_EMAIL) is not None:
+        print(
+            f"Platform administrator already exists, skipped: {settings.PLATFORM_ADMIN_EMAIL}"
+        )
+        return
+
+    platform_role = role_repository.get_by_name(PLATFORM_ADMIN_ROLE_NAME)
+    if platform_role is None:
+        raise RuntimeError(
+            f"Cannot seed platform administrator: '{PLATFORM_ADMIN_ROLE_NAME}' role was not found."
+        )
+
+    username = settings.PLATFORM_ADMIN_EMAIL.split("@")[0]
+    user_repository.create(
+        User(
+            company_id=None,
+            username=username,
+            email=settings.PLATFORM_ADMIN_EMAIL,
+            password_hash=hash_password(settings.PLATFORM_ADMIN_PASSWORD),
+            first_name=settings.PLATFORM_ADMIN_FIRST_NAME or "Platform",
+            last_name=settings.PLATFORM_ADMIN_LAST_NAME or "Administrator",
+            role_id=platform_role.id,
+            is_active=True,
+        )
+    )
+    print(f"Created platform administrator: {settings.PLATFORM_ADMIN_EMAIL} (username: {username})")
+
+
 def main() -> None:
     db = SessionLocal()
     try:
@@ -126,6 +174,7 @@ def main() -> None:
         company = _get_default_company(db)
         _seed_priorities(PriorityRepository(db, company.id), company.id)
         _seed_admin_user(UserRepository(db, company.id), RoleRepository(db), company.id)
+        _seed_platform_administrator(UserRepository(db), RoleRepository(db))
         db.commit()
     except Exception:
         db.rollback()
