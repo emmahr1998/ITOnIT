@@ -4,6 +4,21 @@ from app.schemas.types import UTCDatetime
 from app.services.platform_service import CompanyDetail, PlatformOverview
 
 
+class PlatformLoginRequest(BaseModel):
+    """POST /platform/login request body (Milestone 8, Phase 8.3).
+
+    Deliberately has no company_code field - this resolves the one
+    platform-level System Administrator account (company_id IS NULL), not
+    a tenant user, so there is no company to identify. ``username`` is
+    kept as the field name for consistency with the tenant LoginRequest
+    (backend/app/schemas/auth.py) - it matches either the username or
+    email column, same convention as that schema.
+    """
+
+    username: str
+    password: str
+
+
 class CompanySummaryResponse(BaseModel):
     """One row of GET /platform/companies, and the shape
     GET /platform/overview's recent_companies uses - deliberately smaller

@@ -9,6 +9,11 @@ company through this endpoint actually engages the *existing*,
 already-tested suspension checks in AuthService/get_current_active_user
 (see TestPlatformDeactivationSemantics) rather than reimplementing them.
 
+Phase 8.3 - POST /platform/login and the System Administrator bootstrap
+(see TestPlatformLogin) - the critical property under test throughout that
+class is that the lookup is restricted to company_id IS NULL, so a real
+tenant user's correct credentials can never authenticate here.
+
 System-Administrator-only throughout. Every permission test class also
 proves the normal tenant roles are refused and that a company_id appearing
 in a platform URL never grants access on its own.
@@ -25,11 +30,13 @@ from app.models.inventory_category import InventoryCategory
 from app.models.inventory_item import InventoryItem
 from app.models.ticket import Ticket
 from app.models.user import User
+from app.scripts.seed_initial_data import _seed_platform_administrator
 from tests.conftest import (
     ADMIN_PASSWORD,
     COMPANY_A_ID,
     COMPANY_B_ADMIN_PASSWORD,
     COMPANY_B_ID,
+    EMPLOYEE_PASSWORD,
     SUSPENDED_COMPANY_ID,
 )
 
@@ -802,3 +809,233 @@ class TestPlatformDeactivationCompanyBIsolation:
         after_b = client.get(f"/platform/companies/{COMPANY_B_ID}", headers=headers).json()["data"]
         assert after_b["is_active"] is True
         assert after_b == before_b
+
+
+# ===========================================================================
+# Phase 8.3 - POST /platform/login and the System Administrator bootstrap
+# ===========================================================================
+
+_PLATFORM_ADMIN_PASSWORD = "PlatformAdminPass1!"  # matches active_system_administrator_user
+
+
+class TestPlatformLogin:
+    def test_valid_platform_administrator_login_succeeds(
+        self, client: TestClient, active_system_administrator_user: User
+    ):
+        resp = client.post(
+            "/platform/login",
+            json={"username": active_system_administrator_user.username, "password": _PLATFORM_ADMIN_PASSWORD},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "access" in body and "refresh" in body
+        assert body["token_type"] == "bearer"
+
+    def test_returned_access_token_works_with_auth_me(
+        self, client: TestClient, active_system_administrator_user: User
+    ):
+        login_resp = client.post(
+            "/platform/login",
+            json={"username": active_system_administrator_user.username, "password": _PLATFORM_ADMIN_PASSWORD},
+        )
+        token = login_resp.json()["access"]
+        me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        assert me.json()["role"] == "System Administrator"
+
+    def test_login_by_email_also_succeeds(
+        self, client: TestClient, active_system_administrator_user: User
+    ):
+        resp = client.post(
+            "/platform/login",
+            json={"username": active_system_administrator_user.email, "password": _PLATFORM_ADMIN_PASSWORD},
+        )
+        assert resp.status_code == 200
+
+    def test_wrong_password_generic_401(
+        self, client: TestClient, active_system_administrator_user: User
+    ):
+        resp = client.post(
+            "/platform/login",
+            json={"username": active_system_administrator_user.username, "password": "WrongPassword1!"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid username or password"
+
+    def test_unknown_identifier_generic_401(self, client: TestClient):
+        resp = client.post(
+            "/platform/login", json={"username": "nobody_at_all", "password": "WhateverPass1!"}
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid username or password"
+
+    def test_inactive_platform_administrator_generic_401(
+        self, client: TestClient, active_system_administrator_user: User
+    ):
+        active_system_administrator_user.is_active = False
+        resp = client.post(
+            "/platform/login",
+            json={"username": active_system_administrator_user.username, "password": _PLATFORM_ADMIN_PASSWORD},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid username or password"
+        active_system_administrator_user.is_active = True
+
+    def test_tenant_username_with_correct_tenant_password_rejected(
+        self, client: TestClient, active_admin_user: User
+    ):
+        """The critical isolation test: a real tenant Company Administrator's
+        own username and correct password must NOT authenticate through
+        the platform login - the lookup is restricted to company_id IS
+        NULL, so this tenant user is structurally invisible to it."""
+        resp = client.post(
+            "/platform/login",
+            json={"username": active_admin_user.username, "password": ADMIN_PASSWORD},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid username or password"
+
+    def test_tenant_email_with_correct_tenant_password_rejected(
+        self, client: TestClient, active_employee_user: User
+    ):
+        resp = client.post(
+            "/platform/login",
+            json={"username": active_employee_user.email, "password": EMPLOYEE_PASSWORD},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid username or password"
+
+    def test_platform_administrator_cannot_authenticate_through_tenant_login(
+        self, client: TestClient, active_system_administrator_user: User, company_a: Company
+    ):
+        """The reverse isolation direction: the platform account has no
+        company, so it can't log in through the tenant flow no matter what
+        company_code is supplied."""
+        resp = client.post(
+            "/auth/login",
+            json={
+                "company_code": company_a.company_code,
+                "username": active_system_administrator_user.username,
+                "password": _PLATFORM_ADMIN_PASSWORD,
+            },
+        )
+        assert resp.status_code == 401
+
+    def test_platform_login_does_not_require_or_accept_company_code(
+        self, client: TestClient, active_system_administrator_user: User
+    ):
+        """A company_code sent anyway is simply ignored (extra fields are
+        not part of PlatformLoginRequest's schema) - the request still
+        succeeds on username/password alone."""
+        resp = client.post(
+            "/platform/login",
+            json={
+                "company_code": "SHOULD-BE-IGNORED",
+                "username": active_system_administrator_user.username,
+                "password": _PLATFORM_ADMIN_PASSWORD,
+            },
+        )
+        assert resp.status_code == 200
+
+    def test_platform_login_missing_password_is_a_validation_error(self, client: TestClient):
+        resp = client.post("/platform/login", json={"username": "platform_admin"})
+        assert resp.status_code == 422
+
+    def test_existing_phase_8_1_permissions_unaffected(
+        self, client: TestClient, auth_headers, active_admin_user: User
+    ):
+        """Adding the public /login route must not loosen the existing
+        System-Administrator-only gate on the read/write platform routes."""
+        resp = client.get("/platform/overview", headers=auth_headers(active_admin_user))
+        assert resp.status_code == 403
+
+    def test_existing_phase_8_2_permissions_unaffected(
+        self, client: TestClient, auth_headers, active_admin_user: User
+    ):
+        resp = client.patch(_DEACTIVATE_PATH, headers=auth_headers(active_admin_user))
+        assert resp.status_code == 403
+
+
+class TestPlatformAdministratorSeed:
+    """Unit tests for the bootstrap function itself, isolated from the HTTP
+    layer - mirrors how this codebase would test any other seed-script
+    function, using the same fake repositories as everywhere else."""
+
+    def test_seed_skipped_when_configuration_absent(
+        self, monkeypatch: pytest.MonkeyPatch, user_repository, role_repository
+    ):
+
+        monkeypatch.setattr("app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL", None)
+        monkeypatch.setattr("app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", None)
+        before = len(user_repository._by_id)
+        _seed_platform_administrator(user_repository, role_repository)
+        assert len(user_repository._by_id) == before
+
+    def test_seed_creates_expected_company_id_null_system_administrator(
+        self, monkeypatch: pytest.MonkeyPatch, user_repository, role_repository
+    ):
+
+        monkeypatch.setattr(
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL",
+            "new_platform_admin@itonit.test",
+        )
+        monkeypatch.setattr(
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", "SeedTestPass1!"
+        )
+        monkeypatch.setattr(
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_FIRST_NAME", None
+        )
+        monkeypatch.setattr(
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_LAST_NAME", None
+        )
+        _seed_platform_administrator(user_repository, role_repository)
+        created = user_repository.get_platform_administrator("new_platform_admin@itonit.test")
+        assert created is not None
+        assert created.company_id is None
+        # role_id, not created.role.name: the fake's create() doesn't
+        # populate the .role relationship the way a real, session-attached
+        # ORM object would lazy-load it - this is a fake-only limitation,
+        # not something the real seed script needs to work around.
+        expected_role = role_repository.get_by_name("System Administrator")
+        assert created.role_id == expected_role.id
+
+    def test_seed_run_twice_does_not_create_a_duplicate(
+        self, monkeypatch: pytest.MonkeyPatch, user_repository, role_repository
+    ):
+
+        monkeypatch.setattr(
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL",
+            "twice_platform_admin@itonit.test",
+        )
+        monkeypatch.setattr(
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", "SeedTestPass1!"
+        )
+        _seed_platform_administrator(user_repository, role_repository)
+        after_first = len(user_repository._by_id)
+        _seed_platform_administrator(user_repository, role_repository)
+        after_second = len(user_repository._by_id)
+        assert after_second == after_first
+
+    def test_seed_does_not_mutate_an_existing_platform_account(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        user_repository,
+        role_repository,
+        active_system_administrator_user: User,
+    ):
+        """Re-running the seed against an already-provisioned platform
+        account must leave it untouched - no field is rewritten, no new
+        row created, matching _seed_admin_user's own idempotency
+        contract."""
+        monkeypatch.setattr(
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL",
+            active_system_administrator_user.email,
+        )
+        monkeypatch.setattr(
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", "SomeOtherPass1!"
+        )
+        original_hash = active_system_administrator_user.password_hash
+        before = len(user_repository._by_id)
+        _seed_platform_administrator(user_repository, role_repository)
+        assert len(user_repository._by_id) == before
+        assert active_system_administrator_user.password_hash == original_hash

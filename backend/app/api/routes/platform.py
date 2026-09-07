@@ -1,25 +1,52 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.dependencies import get_platform_service, require_roles
+from app.dependencies import get_auth_service, get_platform_service, require_roles
 from app.models.user import User
+from app.schemas.auth import TokenResponse
 from app.schemas.platform import (
     CompanyDetailResponse,
     CompanySummaryResponse,
+    PlatformLoginRequest,
     PlatformOverviewResponse,
 )
 from app.schemas.response import DataResponse
+from app.services.auth_service import AuthService, InvalidCredentialsError
 from app.services.platform_service import CompanyNotFoundError, PlatformService
 
 router = APIRouter(prefix="/platform", tags=["Platform"])
 
-# The only permission this entire router ever checks. No route below
-# depends on get_current_company_id anywhere - a System Administrator has
-# no company_id at all (see get_current_company_id's own docstring), and
-# every route here exists specifically to see across every company, not
-# one. A company_id appearing in a URL below identifies the resource being
-# inspected, never authorization - access comes exclusively from this role
-# check, identical for every company_id a caller might supply.
+# The only permission every route below except /login ever checks. No
+# route depends on get_current_company_id anywhere - a System
+# Administrator has no company_id at all (see get_current_company_id's own
+# docstring), and every route here exists specifically to see across every
+# company, not one. A company_id appearing in a URL below identifies the
+# resource being inspected, never authorization - access comes exclusively
+# from this role check, identical for every company_id a caller might
+# supply.
 _PLATFORM_ROLES = ("System Administrator",)
+
+
+@router.post("/login", response_model=TokenResponse)
+def platform_login(
+    payload: PlatformLoginRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> TokenResponse:
+    """Public - the one route in this router with no
+    require_roles(...) dependency, since there is no authenticated caller
+    yet (Milestone 8, Phase 8.3). Resolves ONLY the platform-level System
+    Administrator account (company_id IS NULL) - see
+    AuthService.authenticate_platform_administrator and
+    UserRepository.get_platform_administrator. Never accepts a
+    company_code; this is not a tenant login and never falls back to one.
+    """
+    try:
+        return auth_service.login_platform_administrator(payload.username, payload.password)
+    except InvalidCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
 
 
 @router.get("/overview", response_model=DataResponse[PlatformOverviewResponse])
