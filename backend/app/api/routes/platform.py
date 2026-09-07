@@ -73,3 +73,51 @@ def get_platform_company_detail(
         data=CompanyDetailResponse.from_domain(detail),
         msg="Company detail fetched successfully",
     )
+
+
+@router.patch(
+    "/companies/{company_id}/activate", response_model=DataResponse[CompanyDetailResponse]
+)
+def activate_platform_company(
+    company_id: int,
+    platform_service: PlatformService = Depends(get_platform_service),
+    _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
+) -> DataResponse[CompanyDetailResponse]:
+    """Idempotent - activating an already-active company still succeeds.
+    Only flips Company.is_active; see PlatformService.set_company_active's
+    docstring for why every access-control consequence of that flip is
+    enforced by existing auth code, not by anything this route or service
+    does directly."""
+    try:
+        detail = platform_service.set_company_active(company_id, True)
+    except CompanyNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found") from exc
+    return DataResponse(
+        data=CompanyDetailResponse.from_domain(detail),
+        msg="Company activated successfully",
+    )
+
+
+@router.patch(
+    "/companies/{company_id}/deactivate", response_model=DataResponse[CompanyDetailResponse]
+)
+def deactivate_platform_company(
+    company_id: int,
+    platform_service: PlatformService = Depends(get_platform_service),
+    _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
+) -> DataResponse[CompanyDetailResponse]:
+    """Idempotent - deactivating an already-inactive company still
+    succeeds. Never deletes or mutates any tenant data (users, tickets,
+    inventory, settings) - only Company.is_active changes. Suspends the
+    tenant's access via the existing, unmodified checks in
+    AuthService.resolve_company/authenticate (blocks new logins) and
+    get_current_active_user (blocks every already-authenticated request,
+    including ones holding a still-valid, unexpired access token)."""
+    try:
+        detail = platform_service.set_company_active(company_id, False)
+    except CompanyNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found") from exc
+    return DataResponse(
+        data=CompanyDetailResponse.from_domain(detail),
+        msg="Company deactivated successfully",
+    )

@@ -142,3 +142,26 @@ class PlatformService:
                 self._inventory_item_repository_factory(company_id).count_with_filters()
             ),
         )
+
+    def set_company_active(self, company_id: int, is_active: bool) -> CompanyDetail:
+        """Phase 8.2: the only mutation this service performs, and the only
+        one it ever will for company lifecycle - flips is_active and
+        nothing else. Idempotent by construction: writing the same value a
+        company already has still succeeds and still returns a fresh
+        CompanyDetail, since a boolean column has no "already in that
+        state" error to raise. Every access-control consequence of this
+        flip (blocking company resolution/login, blocking every
+        already-authenticated request via get_current_active_user) is
+        enforced entirely by existing auth code this method never touches -
+        see AuthService.resolve_company/authenticate and
+        get_current_active_user's own docstrings. This method does not
+        cascade to users/tickets/inventory/settings in any way; reuses
+        get_company_detail for the response rather than duplicating its
+        aggregate-count queries."""
+        company = self._company_repository.get_by_id(company_id)
+        if company is None:
+            raise CompanyNotFoundError
+        company.is_active = is_active
+        self._company_repository.update(company)
+        self._db.commit()
+        return self.get_company_detail(company_id)

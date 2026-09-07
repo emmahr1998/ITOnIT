@@ -1,23 +1,41 @@
-"""Milestone 8, Phase 8.1: the read-only platform admin backend -
-GET /platform/overview, GET /platform/companies, GET /platform/companies/{id}.
-System-Administrator-only. Every test class at the bottom also proves the
-normal tenant roles are refused and that a company_id appearing in a
-platform URL never grants access on its own - see TestPlatformPermissions
-and TestPlatformIsolationAndSecurity.
+"""Milestone 8: the platform admin backend.
+
+Phase 8.1 - the read-only surface: GET /platform/overview,
+GET /platform/companies, GET /platform/companies/{id}.
+
+Phase 8.2 - the one mutation surface: PATCH /platform/companies/{id}/
+activate and /deactivate, and the end-to-end proof that deactivating a
+company through this endpoint actually engages the *existing*,
+already-tested suspension checks in AuthService/get_current_active_user
+(see TestPlatformDeactivationSemantics) rather than reimplementing them.
+
+System-Administrator-only throughout. Every permission test class also
+proves the normal tenant roles are refused and that a company_id appearing
+in a platform URL never grants access on its own.
 """
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.security import create_access_token
 from app.models.company import Company
 from app.models.enums import InventoryStatus, InventoryTrackingType, TicketStatus
 from app.models.inventory_category import InventoryCategory
 from app.models.inventory_item import InventoryItem
 from app.models.ticket import Ticket
-from tests.conftest import COMPANY_A_ID, COMPANY_B_ID, SUSPENDED_COMPANY_ID
+from app.models.user import User
+from tests.conftest import (
+    ADMIN_PASSWORD,
+    COMPANY_A_ID,
+    COMPANY_B_ADMIN_PASSWORD,
+    COMPANY_B_ID,
+    SUSPENDED_COMPANY_ID,
+)
 
 _PLATFORM_PATHS = ("/platform/overview", "/platform/companies", f"/platform/companies/{COMPANY_A_ID}")
+_ACTIVATE_PATH = f"/platform/companies/{COMPANY_A_ID}/activate"
+_DEACTIVATE_PATH = f"/platform/companies/{COMPANY_A_ID}/deactivate"
 
 
 def _reset(repo, rows: list) -> None:
@@ -433,3 +451,354 @@ class TestPlatformIsolationAndSecurity:
             "/analytics/tickets", headers=auth_headers(active_system_administrator_user)
         )
         assert resp.status_code == 403
+
+
+# ===========================================================================
+# Phase 8.2 - PATCH /platform/companies/{id}/activate and /deactivate
+# ===========================================================================
+
+_ACTIVATE_DEACTIVATE_PATHS = (_ACTIVATE_PATH, _DEACTIVATE_PATH)
+
+
+class TestPlatformActivateDeactivate:
+    def test_deactivate_active_company_succeeds(
+        self, client: TestClient, auth_headers, active_system_administrator_user, three_companies
+    ):
+        resp = client.patch(_DEACTIVATE_PATH, headers=auth_headers(active_system_administrator_user))
+        assert resp.status_code == 200
+        assert resp.json()["data"]["is_active"] is False
+
+    def test_activate_inactive_company_succeeds(
+        self, client: TestClient, auth_headers, active_system_administrator_user, three_companies
+    ):
+        path = f"/platform/companies/{SUSPENDED_COMPANY_ID}/activate"
+        resp = client.patch(path, headers=auth_headers(active_system_administrator_user))
+        assert resp.status_code == 200
+        assert resp.json()["data"]["is_active"] is True
+
+    def test_deactivate_is_idempotent(
+        self, client: TestClient, auth_headers, active_system_administrator_user, three_companies
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        first = client.patch(_DEACTIVATE_PATH, headers=headers)
+        second = client.patch(_DEACTIVATE_PATH, headers=headers)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["data"]["is_active"] is False
+
+    def test_activate_is_idempotent(
+        self, client: TestClient, auth_headers, active_system_administrator_user, three_companies
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        first = client.patch(_ACTIVATE_PATH, headers=headers)
+        second = client.patch(_ACTIVATE_PATH, headers=headers)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["data"]["is_active"] is True
+
+    def test_deactivate_nonexistent_company_404(
+        self, client: TestClient, auth_headers, active_system_administrator_user
+    ):
+        resp = client.patch(
+            "/platform/companies/999999/deactivate",
+            headers=auth_headers(active_system_administrator_user),
+        )
+        assert resp.status_code == 404
+
+    def test_activate_nonexistent_company_404(
+        self, client: TestClient, auth_headers, active_system_administrator_user
+    ):
+        resp = client.patch(
+            "/platform/companies/999999/activate",
+            headers=auth_headers(active_system_administrator_user),
+        )
+        assert resp.status_code == 404
+
+    def test_deactivate_only_changes_is_active_no_other_field(
+        self, client: TestClient, auth_headers, active_system_administrator_user, three_companies
+    ):
+        before = client.get(
+            f"/platform/companies/{COMPANY_A_ID}", headers=auth_headers(active_system_administrator_user)
+        ).json()["data"]
+        resp = client.patch(_DEACTIVATE_PATH, headers=auth_headers(active_system_administrator_user))
+        after = resp.json()["data"]
+        assert after["is_active"] is False
+        for field in ("id", "name", "company_code", "contact_email", "timezone", "language"):
+            assert after[field] == before[field]
+
+
+class TestPlatformActivateDeactivatePermissions:
+    @pytest.mark.parametrize("path", _ACTIVATE_DEACTIVATE_PATHS)
+    def test_unauthenticated_401(self, client: TestClient, path: str):
+        assert client.patch(path).status_code == 401
+
+    @pytest.mark.parametrize("path", _ACTIVATE_DEACTIVATE_PATHS)
+    def test_company_administrator_403(
+        self, client: TestClient, auth_headers, active_admin_user, path: str
+    ):
+        resp = client.patch(path, headers=auth_headers(active_admin_user))
+        assert resp.status_code == 403
+
+    @pytest.mark.parametrize("path", _ACTIVATE_DEACTIVATE_PATHS)
+    def test_technician_403(
+        self, client: TestClient, auth_headers, active_technician_user, path: str
+    ):
+        resp = client.patch(path, headers=auth_headers(active_technician_user))
+        assert resp.status_code == 403
+
+    @pytest.mark.parametrize("path", _ACTIVATE_DEACTIVATE_PATHS)
+    def test_employee_403(
+        self, client: TestClient, auth_headers, active_employee_user, path: str
+    ):
+        resp = client.patch(path, headers=auth_headers(active_employee_user))
+        assert resp.status_code == 403
+
+
+class TestPlatformDeactivationSemantics:
+    """The critical Phase 8.2 behavior: deactivating through the platform
+    endpoint must engage the *existing*, already-tested suspension checks
+    in AuthService/get_current_active_user (see test_auth.py's own
+    suspended-company tests) - this class proves the platform endpoint
+    actually triggers them end-to-end, not that the checks themselves work
+    (already proven). Deliberately uses the plain company_a/active_admin_user
+    fixtures (not three_companies), since these tests need real, known
+    login credentials and company codes.
+    """
+
+    def test_deactivation_blocks_resolve_company(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        company_a: Company,
+    ):
+        deactivate_path = f"/platform/companies/{COMPANY_A_ID}/deactivate"
+        resp = client.patch(deactivate_path, headers=auth_headers(active_system_administrator_user))
+        assert resp.status_code == 200
+
+        resolved = client.post(
+            "/auth/resolve-company", json={"company_code": company_a.company_code}
+        )
+        assert resolved.status_code == 403
+        assert resolved.json()["detail"] == "This company's account has been suspended"
+
+    def test_deactivation_blocks_new_login(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        active_admin_user: User,
+        company_a: Company,
+    ):
+        deactivate_path = f"/platform/companies/{COMPANY_A_ID}/deactivate"
+        resp = client.patch(deactivate_path, headers=auth_headers(active_system_administrator_user))
+        assert resp.status_code == 200
+
+        login_resp = client.post(
+            "/auth/login",
+            json={
+                "company_code": company_a.company_code,
+                "username": active_admin_user.username,
+                "password": ADMIN_PASSWORD,
+            },
+        )
+        assert login_resp.status_code == 403
+        assert login_resp.json()["detail"] == "This company's account has been suspended"
+
+    def test_deactivation_revokes_an_already_issued_valid_token(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        active_admin_user: User,
+    ):
+        """Obtains a real tenant access token BEFORE deactivation, confirms
+        it works, deactivates Company A through the platform endpoint, then
+        proves the SAME still-unexpired token now fails - the platform
+        endpoint never touches tokens directly, this is entirely
+        get_current_active_user's existing per-request check reacting to
+        the is_active flip."""
+        token = create_access_token(subject=active_admin_user.id)
+        still_active = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert still_active.status_code == 200
+
+        deactivate_path = f"/platform/companies/{COMPANY_A_ID}/deactivate"
+        resp = client.patch(deactivate_path, headers=auth_headers(active_system_administrator_user))
+        assert resp.status_code == 200
+
+        now_suspended = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert now_suspended.status_code == 403
+        assert now_suspended.json()["detail"] == "This company's account has been suspended"
+
+    def test_reactivation_restores_resolve_company_and_login(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        active_admin_user: User,
+        company_a: Company,
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        deactivate_path = f"/platform/companies/{COMPANY_A_ID}/deactivate"
+        activate_path = f"/platform/companies/{COMPANY_A_ID}/activate"
+
+        client.patch(deactivate_path, headers=headers)
+        blocked = client.post(
+            "/auth/resolve-company", json={"company_code": company_a.company_code}
+        )
+        assert blocked.status_code == 403
+
+        reactivate_resp = client.patch(activate_path, headers=headers)
+        assert reactivate_resp.status_code == 200
+
+        resolved = client.post(
+            "/auth/resolve-company", json={"company_code": company_a.company_code}
+        )
+        assert resolved.status_code == 200
+
+        login_resp = client.post(
+            "/auth/login",
+            json={
+                "company_code": company_a.company_code,
+                "username": active_admin_user.username,
+                "password": ADMIN_PASSWORD,
+            },
+        )
+        assert login_resp.status_code == 200
+
+
+class TestPlatformDeactivationDataPreservation:
+    def test_deactivate_and_reactivate_preserve_all_counts(
+        self, client: TestClient, auth_headers, active_system_administrator_user, three_companies
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        detail_url = f"/platform/companies/{COMPANY_A_ID}"
+
+        before = client.get(detail_url, headers=headers).json()["data"]
+        client.patch(_DEACTIVATE_PATH, headers=headers)
+        during = client.get(detail_url, headers=headers).json()["data"]
+        client.patch(_ACTIVATE_PATH, headers=headers)
+        after = client.get(detail_url, headers=headers).json()["data"]
+
+        for snapshot in (during, after):
+            assert snapshot["user_count"] == before["user_count"]
+            assert snapshot["ticket_count"] == before["ticket_count"]
+            assert snapshot["inventory_item_count"] == before["inventory_item_count"]
+            assert snapshot["name"] == before["name"]
+            assert snapshot["company_code"] == before["company_code"]
+            assert snapshot["timezone"] == before["timezone"]
+            assert snapshot["language"] == before["language"]
+
+    def test_deactivate_does_not_remove_users_from_the_company(
+        self, client: TestClient, auth_headers, active_system_administrator_user, three_companies
+    ):
+        """A lightweight direct check on the underlying fake store (mirrors
+        a real-DB row-count check) - proves no cascade delete happens."""
+        headers = auth_headers(active_system_administrator_user)
+        before = client.get(
+            f"/platform/companies/{COMPANY_A_ID}", headers=headers
+        ).json()["data"]["user_count"]
+        client.patch(_DEACTIVATE_PATH, headers=headers)
+        after = client.get(
+            f"/platform/companies/{COMPANY_A_ID}", headers=headers
+        ).json()["data"]["user_count"]
+        assert after == before
+
+    def test_deactivate_and_reactivate_touch_no_other_tenant_table(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        three_companies,
+        user_repository,
+        ticket_repository,
+        comment_repository,
+        attachment_repository,
+        history_repository,
+        inventory_item_repository,
+        inventory_category_repository,
+        category_repository,
+        priority_repository,
+        location_repository,
+    ):
+        """The active-state toggle must not delete or alter a single row in
+        any tenant table for Company A - a direct row-count snapshot of
+        every repository the client fixture wires up (mirrors what a real
+        before/after SELECT COUNT(*) per table would show), taken before
+        deactivation and compared after deactivate+reactivate."""
+
+        def _company_a_counts() -> dict[str, int]:
+            by_id_repos = {
+                "users": user_repository,
+                "tickets": ticket_repository,
+                "comments": comment_repository,
+                "attachments": attachment_repository,
+                "inventory_items": inventory_item_repository,
+                "inventory_categories": inventory_category_repository,
+                "categories": category_repository,
+                "priorities": priority_repository,
+                "locations": location_repository,
+            }
+            counts = {
+                name: sum(1 for row in repo._by_id.values() if row.company_id == COMPANY_A_ID)
+                for name, repo in by_id_repos.items()
+            }
+            # FakeHistoryRepository stores rows in a plain list, not a dict
+            # keyed by id (see conftest.py's own class) - same idea, different
+            # underlying container.
+            counts["ticket_history"] = sum(
+                1 for row in history_repository._entries if row.company_id == COMPANY_A_ID
+            )
+            return counts
+
+        before = _company_a_counts()
+
+        headers = auth_headers(active_system_administrator_user)
+        client.patch(_DEACTIVATE_PATH, headers=headers)
+        during = _company_a_counts()
+        client.patch(_ACTIVATE_PATH, headers=headers)
+        after = _company_a_counts()
+
+        assert during == before
+        assert after == before
+
+
+class TestPlatformDeactivationCompanyBIsolation:
+    def test_deactivating_company_a_does_not_affect_company_b_login(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        company_a: Company,
+        company_b_admin_user: User,
+        company_b: Company,
+    ):
+        deactivate_path = f"/platform/companies/{COMPANY_A_ID}/deactivate"
+        resp = client.patch(deactivate_path, headers=auth_headers(active_system_administrator_user))
+        assert resp.status_code == 200
+        assert company_a.is_active is False
+        assert company_b.is_active is True
+
+        login_resp = client.post(
+            "/auth/login",
+            json={
+                "company_code": company_b.company_code,
+                "username": company_b_admin_user.username,
+                "password": COMPANY_B_ADMIN_PASSWORD,
+            },
+        )
+        assert login_resp.status_code == 200
+
+    def test_deactivating_company_a_does_not_affect_company_bs_platform_detail(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        three_companies,
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        before_b = client.get(f"/platform/companies/{COMPANY_B_ID}", headers=headers).json()["data"]
+        client.patch(_DEACTIVATE_PATH, headers=headers)
+        after_b = client.get(f"/platform/companies/{COMPANY_B_ID}", headers=headers).json()["data"]
+        assert after_b["is_active"] is True
+        assert after_b == before_b
