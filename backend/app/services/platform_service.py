@@ -8,6 +8,8 @@ from app.repositories.company import CompanyRepository
 from app.repositories.inventory_item import InventoryItemRepository
 from app.repositories.ticket import TicketRepository
 from app.repositories.user import UserRepository
+from app.schemas.company import CompanyRegisterRequest
+from app.services.company_service import CompanyService
 
 # Small, fixed - not a query parameter. GET /platform/overview shows a
 # glance, not a full list (that's what GET /platform/companies is for).
@@ -18,9 +20,13 @@ class CompanyNotFoundError(Exception):
     """Raised when a platform-admin company_id does not exist.
 
     Deliberately a separate exception from CompanyService's own
-    CompanyNotFoundError - this service does not import from CompanyService
-    at all (see this module's own docstring on why platform orchestration
-    and tenant/company lifecycle business logic stay in separate services).
+    CompanyNotFoundError - get_company_detail below never calls
+    CompanyService, only CompanyRepository directly, so this stays this
+    module's own domain exception. create_company (Phase 8.4) does call
+    CompanyService.register_company, but deliberately lets that method's
+    own CompanyCodeConflictError propagate unchanged rather than wrapping
+    it in a second, redundant exception type - see create_company's
+    docstring.
     """
 
 
@@ -50,24 +56,30 @@ class CompanyDetail:
 
 
 class PlatformService:
-    """Read-only platform-level orchestration for the System Administrator
-    console (Milestone 8, Phase 8.1: GET /platform/overview,
-    GET /platform/companies, GET /platform/companies/{id}).
+    """Platform-level orchestration for the System Administrator console:
+    GET /platform/overview, GET /platform/companies,
+    GET /platform/companies/{id} (Phase 8.1), PATCH .../activate|deactivate
+    (Phase 8.2), and POST /platform/companies (Phase 8.4).
 
     Deliberately separate from CompanyService, which owns tenant/company
-    lifecycle business logic (registration, settings, logo) - a System
+    lifecycle *business logic* (registration, settings, logo) - a System
     Administrator's view across every company is a fundamentally different
     kind of operation from a Company Administrator managing its own company,
-    not a superset of it. This service is never given a company_id at
-    construction time, unlike every tenant-scoped service in this codebase -
-    it has no "caller's own company" to be scoped to at all. Every
-    repository it uses for a *target* company's aggregate counts is
+    not a superset of it. This service does not reimplement any of that
+    business logic; create_company below delegates the entire job to
+    CompanyService.register_company unchanged, exactly like every read
+    method here delegates its counting to the repository layer rather than
+    recomputing anything by hand. This service is never given a company_id
+    at construction time, unlike every tenant-scoped service in this
+    codebase - it has no "caller's own company" to be scoped to at all.
+    Every repository it uses for a *target* company's aggregate counts is
     constructed explicitly with that company's own id, taken from the
-    method argument the route passed straight from the URL - never derived
-    from the caller (a System Administrator has no company_id - see
-    get_current_company_id's docstring) and never treated as authorization
-    (that's require_roles("System Administrator") alone, enforced by the
-    route, before this service is ever called).
+    method argument the route passed straight from the URL (or, for
+    create_company, from CompanyService.register_company's own return
+    value) - never derived from the caller (a System Administrator has no
+    company_id - see get_current_company_id's docstring) and never treated
+    as authorization (that's require_roles("System Administrator") alone,
+    enforced by the route, before this service is ever called).
     """
 
     def __init__(
@@ -80,6 +92,7 @@ class PlatformService:
         inventory_item_repository_factory: (
             Callable[[int], InventoryItemRepository] | None
         ) = None,
+        company_service: CompanyService | None = None,
     ) -> None:
         self._db = db
         self._company_repository = company_repository or CompanyRepository(db)
@@ -97,6 +110,7 @@ class PlatformService:
         self._inventory_item_repository_factory = inventory_item_repository_factory or (
             lambda company_id: InventoryItemRepository(db, company_id)
         )
+        self._company_service = company_service or CompanyService(db)
 
     def get_overview(self) -> PlatformOverview:
         return PlatformOverview(
@@ -165,3 +179,20 @@ class PlatformService:
         self._company_repository.update(company)
         self._db.commit()
         return self.get_company_detail(company_id)
+
+    def create_company(self, payload: CompanyRegisterRequest) -> CompanyDetail:
+        """Phase 8.4: a System Administrator provisioning a tenant company
+        on a customer's behalf. Delegates the entire job - company-code
+        uniqueness check, company + first Company Administrator + all
+        starter data, one atomic transaction - to
+        CompanyService.register_company unchanged; this method adds no
+        business logic of its own beyond obtaining the response. Deliberately
+        does not catch CompanyCodeConflictError here: it propagates
+        unchanged up to the route, which maps it exactly the same way
+        POST /companies/register's own route already does - one exception
+        type, one 409 mapping, not a second platform-specific copy of
+        either. Unlike self-registration, the caller (a System
+        Administrator) is never issued tokens for the new tenant admin -
+        see the route's own docstring."""
+        admin = self._company_service.register_company(payload)
+        return self.get_company_detail(admin.company_id)
