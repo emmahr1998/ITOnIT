@@ -1039,3 +1039,246 @@ class TestPlatformAdministratorSeed:
         _seed_platform_administrator(user_repository, role_repository)
         assert len(user_repository._by_id) == before
         assert active_system_administrator_user.password_hash == original_hash
+
+
+# ===========================================================================
+# Phase 8.4 - POST /platform/companies (company provisioning)
+# ===========================================================================
+
+
+def _platform_company_payload(**overrides: object) -> dict:
+    payload = {
+        "company_name": "Provisioned Co",
+        "company_code": "PROV0001",
+        "first_name": "Pat",
+        "last_name": "Admin",
+        "username": "patadmin",
+        "email": "pat@provisioned.test",
+        "password": "SuperSecret1!",
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestPlatformCreateCompany:
+    def test_system_administrator_creates_company_201(
+        self, client: TestClient, auth_headers, active_system_administrator_user
+    ):
+        resp = client.post(
+            "/platform/companies",
+            json=_platform_company_payload(),
+            headers=auth_headers(active_system_administrator_user),
+        )
+        assert resp.status_code == 201
+        data = resp.json()["data"]
+        assert data["name"] == "Provisioned Co"
+        assert data["company_code"] == "PROV0001"
+        assert data["user_count"] == 1
+        assert data["ticket_count"] == 0
+        assert data["inventory_item_count"] == 0
+
+    def test_response_contains_no_tokens(
+        self, client: TestClient, auth_headers, active_system_administrator_user
+    ):
+        resp = client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROV0002"),
+            headers=auth_headers(active_system_administrator_user),
+        )
+        body = resp.json()
+        assert "access" not in body
+        assert "refresh" not in body
+        assert "access" not in body["data"]
+        assert "refresh" not in body["data"]
+
+    def test_duplicate_company_code_matches_self_registration_409(
+        self, client: TestClient, auth_headers, active_system_administrator_user
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVDUP1"),
+            headers=headers,
+        )
+        resp = client.post(
+            "/platform/companies",
+            json=_platform_company_payload(
+                company_code="PROVDUP1",
+                username="anotheradmin",
+                email="another@provisioned.test",
+            ),
+            headers=headers,
+        )
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "A company with this company code already exists"
+
+    def test_company_administrator_403(self, client: TestClient, auth_headers, active_admin_user):
+        resp = client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVCA01"),
+            headers=auth_headers(active_admin_user),
+        )
+        assert resp.status_code == 403
+
+    def test_technician_403(self, client: TestClient, auth_headers, active_technician_user):
+        resp = client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVTE01"),
+            headers=auth_headers(active_technician_user),
+        )
+        assert resp.status_code == 403
+
+    def test_employee_403(self, client: TestClient, auth_headers, active_employee_user):
+        resp = client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVEM01"),
+            headers=auth_headers(active_employee_user),
+        )
+        assert resp.status_code == 403
+
+    def test_unauthenticated_401(self, client: TestClient):
+        resp = client.post(
+            "/platform/companies", json=_platform_company_payload(company_code="PROVUN01")
+        )
+        assert resp.status_code == 401
+
+    def test_created_company_visible_in_list(
+        self, client: TestClient, auth_headers, active_system_administrator_user
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVLIST"),
+            headers=headers,
+        )
+        resp = client.get("/platform/companies?search=PROVLIST", headers=headers)
+        codes = [c["company_code"] for c in resp.json()["data"]]
+        assert "PROVLIST" in codes
+
+    def test_created_company_visible_in_detail(
+        self, client: TestClient, auth_headers, active_system_administrator_user
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        create_resp = client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVDET1"),
+            headers=headers,
+        )
+        new_id = create_resp.json()["data"]["id"]
+        detail_resp = client.get(f"/platform/companies/{new_id}", headers=headers)
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["data"]["company_code"] == "PROVDET1"
+
+    def test_client_supplied_role_id_and_company_id_are_ignored_matching_self_registration(
+        self, client: TestClient, auth_headers, active_system_administrator_user, company_a: Company
+    ):
+        """CompanyRegisterRequest has no model_config restricting extra
+        fields, so Pydantic's default (extra="ignore") applies - confirmed
+        by test_company_registration.py's own
+        test_register_company_ignores_client_supplied_role_id/_company_id,
+        which prove a 201 still comes back with these extra fields present.
+        This platform route reuses that exact schema unchanged, so the
+        same behavior must hold here too - a validation error here would
+        be a regression against the existing, established behavior."""
+        resp = client.post(
+            "/platform/companies",
+            json={
+                **_platform_company_payload(company_code="PROVEXTRA"),
+                "role_id": 999,
+                "company_id": company_a.id,
+            },
+            headers=auth_headers(active_system_administrator_user),
+        )
+        assert resp.status_code == 201
+        assert resp.json()["data"]["company_code"] == "PROVEXTRA"
+
+    def test_starter_data_matches_register_company_behavior(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        priority_repository,
+        category_repository,
+        location_repository,
+        department_repository,
+        inventory_category_repository,
+    ):
+        """Spot-checks that the same five kinds of starter data
+        CompanyService.register_company seeds for self-registration are
+        also present after platform-provisioned creation - the regression
+        proof that this route truly delegates rather than reimplementing
+        seeding (see CompanyService._seed_defaults for the source of truth
+        these counts mirror)."""
+        headers = auth_headers(active_system_administrator_user)
+        create_resp = client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVSEED"),
+            headers=headers,
+        )
+        new_id = create_resp.json()["data"]["id"]
+
+        assert sum(1 for p in priority_repository._by_id.values() if p.company_id == new_id) == 4
+        assert sum(1 for c in category_repository._by_id.values() if c.company_id == new_id) == 5
+        assert (
+            sum(1 for loc in location_repository._by_id.values() if loc.company_id == new_id) == 1
+        )
+        assert (
+            sum(1 for d in department_repository._by_id.values() if d.company_id == new_id) == 1
+        )
+        assert (
+            sum(
+                1
+                for ic in inventory_category_repository._by_id.values()
+                if ic.company_id == new_id
+            )
+            == 11
+        )
+
+    def test_existing_tenant_data_untouched(
+        self,
+        client: TestClient,
+        auth_headers,
+        active_system_administrator_user,
+        active_admin_user: User,
+        company_a: Company,
+    ):
+        headers = auth_headers(active_system_administrator_user)
+        client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVSAFE"),
+            headers=headers,
+        )
+        # Company A's own admin can still log in, completely unaffected by
+        # a brand new, unrelated company being created on the platform.
+        login_resp = client.post(
+            "/auth/login",
+            json={
+                "company_code": company_a.company_code,
+                "username": active_admin_user.username,
+                "password": ADMIN_PASSWORD,
+            },
+        )
+        assert login_resp.status_code == 200
+
+    def test_phase_8_1_and_8_3_platform_behavior_unaffected(
+        self, client: TestClient, auth_headers, active_system_administrator_user
+    ):
+        """A lightweight regression check specific to this addition - the
+        rest of this file's existing test classes already fully prove
+        Phase 8.1/8.2/8.3 behavior on their own."""
+        headers = auth_headers(active_system_administrator_user)
+        client.post(
+            "/platform/companies",
+            json=_platform_company_payload(company_code="PROVREG1"),
+            headers=headers,
+        )
+        overview_resp = client.get("/platform/overview", headers=headers)
+        assert overview_resp.status_code == 200
+        login_resp = client.post(
+            "/platform/login",
+            json={
+                "username": active_system_administrator_user.username,
+                "password": _PLATFORM_ADMIN_PASSWORD,
+            },
+        )
+        assert login_resp.status_code == 200

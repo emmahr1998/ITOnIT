@@ -2274,15 +2274,17 @@ def client(
             department_repository=department_repository,
         )
 
-    def _company_service() -> CompanyService:
+    def _make_company_service() -> CompanyService:
         # Registration creates a brand-new company_id at call time (there
-        # is no authenticated caller to derive one from - this is the one
-        # public, unauthenticated write path in the whole app) - so, unlike
-        # every other override above, this mutates the shared fake
-        # repositories' .company_id to whatever id CompanyService.
-        # register_company assigns the new company, rather than one already
-        # known from get_current_company_id. Safe for the same reason as
-        # every other override here: one request in flight at a time.
+        # is no authenticated caller to derive one from - this is one of
+        # the few unauthenticated write paths in the whole app, the other
+        # being PlatformService.create_company, which also calls this same
+        # factory - see _platform_service below) - so, unlike every other
+        # override above, this mutates the shared fake repositories'
+        # .company_id to whatever id CompanyService.register_company
+        # assigns the new company, rather than one already known from
+        # get_current_company_id. Safe for the same reason as every other
+        # override here: one request in flight at a time.
         def _priority_repo(company_id: int) -> FakePriorityRepository:
             priority_repository.company_id = company_id
             return priority_repository
@@ -2315,6 +2317,9 @@ def client(
             department_repository_factory=_department_repo,
             inventory_category_repository_factory=_inventory_category_repo,
         )
+
+    def _company_service() -> CompanyService:
+        return _make_company_service()
 
     def _make_ticket_inventory_service(company_id: int) -> TicketInventoryService:
         ticket_inventory_usage_repository.company_id = company_id
@@ -2375,6 +2380,10 @@ def client(
             user_repository_factory=lambda company_id: user_repository.scoped(company_id),
             ticket_repository_factory=_ticket_repository_for,
             inventory_item_repository_factory=_inventory_item_repository_for,
+            # Phase 8.4: create_company delegates to the exact same fake-backed
+            # CompanyService _company_service() itself uses - one seeding
+            # implementation, shared, never a second copy for the platform path.
+            company_service=_make_company_service(),
         )
 
     def _analytics_service(company_id: int = Depends(get_current_company_id)) -> AnalyticsService:
