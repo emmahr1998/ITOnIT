@@ -40,6 +40,25 @@ class CompanySummaryResponse(BaseModel):
     created_at: UTCDatetime
 
 
+class CompanyListResponse(BaseModel):
+    """GET /platform/companies. A platform-specific list envelope, not the
+    generic DataResponse[T] (backend/app/schemas/response.py) - this is the
+    one list endpoint whose frontend needs an exact server-side page count,
+    so `total` is exposed as a structured field rather than only inside the
+    human-readable `msg` string. `total` is the filtered count (search/
+    is_active applied, skip/limit not applied) - the same value
+    PlatformService.list_companies already returns alongside the page of
+    rows, see that method's own `total` return value. Deliberately scoped to
+    this one endpoint rather than changing DataResponse itself, which every
+    other endpoint in the app also uses and which has no pagination concept
+    to begin with.
+    """
+
+    data: list[CompanySummaryResponse]
+    total: int
+    msg: str
+
+
 class PlatformOverviewResponse(BaseModel):
     """GET /platform/overview. total_users is tenant users only
     (company_id IS NOT NULL) - the System Administrator's own account is

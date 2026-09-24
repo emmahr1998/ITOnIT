@@ -242,12 +242,79 @@ class TestPlatformCompanyList:
         )
         body = resp.json()
         assert len(body["data"]) == 2
+        assert body["total"] == 5
         assert body["msg"] == "Fetched 2 of 5 companies"
 
         resp2 = client.get(
             "/platform/companies?skip=4&limit=2", headers=auth_headers(active_system_administrator_user)
         )
         assert len(resp2.json()["data"]) == 1
+
+    def test_total_with_no_filters(
+        self, client: TestClient, auth_headers, active_system_administrator_user, many_companies
+    ):
+        """5 companies exist in total (many_companies) - total must be the
+        full unfiltered count, not the page size."""
+        resp = client.get("/platform/companies", headers=auth_headers(active_system_administrator_user))
+        assert resp.json()["total"] == 5
+
+    def test_total_with_search(
+        self, client: TestClient, auth_headers, active_system_administrator_user, many_companies
+    ):
+        """many_companies has exactly 2 "acme" matches (Acme Corp, Acme
+        Robotics) - total must reflect the search filter, not the
+        unfiltered count of 5."""
+        resp = client.get(
+            "/platform/companies?search=acme", headers=auth_headers(active_system_administrator_user)
+        )
+        body = resp.json()
+        assert body["total"] == 2
+        assert len(body["data"]) == 2
+
+    def test_total_with_is_active_true(
+        self, client: TestClient, auth_headers, active_system_administrator_user, many_companies
+    ):
+        """many_companies has exactly 3 active companies."""
+        resp = client.get(
+            "/platform/companies?is_active=true", headers=auth_headers(active_system_administrator_user)
+        )
+        assert resp.json()["total"] == 3
+
+    def test_total_with_is_active_false(
+        self, client: TestClient, auth_headers, active_system_administrator_user, many_companies
+    ):
+        """many_companies has exactly 2 inactive companies."""
+        resp = client.get(
+            "/platform/companies?is_active=false", headers=auth_headers(active_system_administrator_user)
+        )
+        assert resp.json()["total"] == 2
+
+    def test_total_is_filtered_count_not_page_size_when_limit_smaller(
+        self, client: TestClient, auth_headers, active_system_administrator_user, many_companies
+    ):
+        """With is_active=true (3 matches) and limit=2, the page has 2 rows
+        but total must still report 3 - the full filtered count computed
+        before skip/limit, never len(data)."""
+        resp = client.get(
+            "/platform/companies?is_active=true&limit=2",
+            headers=auth_headers(active_system_administrator_user),
+        )
+        body = resp.json()
+        assert len(body["data"]) == 2
+        assert body["total"] == 3
+
+    def test_skip_does_not_change_total(
+        self, client: TestClient, auth_headers, active_system_administrator_user, many_companies
+    ):
+        """Paging deeper (skip=4) still reports the same total of 5 - total
+        is computed independently of skip/limit, not derived from the page
+        actually returned."""
+        resp = client.get(
+            "/platform/companies?skip=4&limit=2", headers=auth_headers(active_system_administrator_user)
+        )
+        body = resp.json()
+        assert len(body["data"]) == 1
+        assert body["total"] == 5
 
     def test_sorting_by_name_ascending(
         self, client: TestClient, auth_headers, active_system_administrator_user, many_companies
