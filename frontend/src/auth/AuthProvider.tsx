@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { fetchCurrentUser, loginRequest, registerCompanyRequest } from "../api/auth";
 import { getApiErrorMessage } from "../api/client";
+import { loginPlatformRequest } from "../api/platform";
 import { tokenStore } from "../api/tokenStore";
 import type { CompanyRegisterRequest, CurrentUser } from "../types/auth";
 import { AuthContext, type AuthStatus } from "./AuthContext";
@@ -78,6 +79,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const loginPlatform = useCallback(async (username: string, password: string) => {
+    setError(null);
+    try {
+      const tokens = await loginPlatformRequest({ username, password });
+      tokenStore.setTokens({ access: tokens.access, refresh: tokens.refresh });
+      const currentUser = await fetchCurrentUser();
+      setUser(currentUser);
+      setStatus("authenticated");
+    } catch (err) {
+      tokenStore.clear();
+      setStatus("unauthenticated");
+      setError(getApiErrorMessage(err, "Login failed. Please try again."));
+      throw err;
+    }
+  }, []);
+
   const registerCompany = useCallback(async (payload: CompanyRegisterRequest) => {
     setError(null);
     try {
@@ -95,8 +112,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, status, error, login, registerCompany, logout }),
-    [user, status, error, login, registerCompany, logout],
+    () => ({ user, status, error, login, loginPlatform, registerCompany, logout }),
+    [user, status, error, login, loginPlatform, registerCompany, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,6 +1,8 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "../components/layout/AppLayout";
+import { PlatformLayout } from "../components/platform/PlatformLayout";
 import { ProtectedRoute } from "../auth/ProtectedRoute";
+import { PlatformProtectedRoute } from "../auth/PlatformProtectedRoute";
 import { DashboardPage } from "../pages/DashboardPage";
 import { LandingPage } from "../pages/LandingPage";
 import { LoginPage } from "../pages/LoginPage";
@@ -17,6 +19,11 @@ import { InventoryPage } from "../pages/admin/InventoryPage";
 import { InventoryCategoryPage } from "../pages/admin/InventoryCategoryPage";
 import { CompanySettingsPage } from "../pages/admin/CompanySettingsPage";
 import { AboutPage } from "../pages/AboutPage";
+import { PlatformLoginPage } from "../pages/platform/PlatformLoginPage";
+import { PlatformDashboardPage } from "../pages/platform/PlatformDashboardPage";
+import { PlatformCompaniesPage } from "../pages/platform/PlatformCompaniesPage";
+import { PlatformCompanyDetailPage } from "../pages/platform/PlatformCompanyDetailPage";
+import { PlatformCreateCompanyPage } from "../pages/platform/PlatformCreateCompanyPage";
 
 const CREATE_TICKET_ROLES = ["Employee", "Company Administrator"] as const;
 const ADMIN_ROLES = ["Company Administrator"] as const;
@@ -33,6 +40,20 @@ export function AppRouter() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/platform/login" element={<PlatformLoginPage />} />
+
+        <Route
+          element={
+            <PlatformProtectedRoute>
+              <PlatformLayout />
+            </PlatformProtectedRoute>
+          }
+        >
+          <Route path="/platform" element={<PlatformDashboardPage />} />
+          <Route path="/platform/companies" element={<PlatformCompaniesPage />} />
+          <Route path="/platform/companies/new" element={<PlatformCreateCompanyPage />} />
+          <Route path="/platform/companies/:companyId" element={<PlatformCompanyDetailPage />} />
+        </Route>
 
         <Route
           element={

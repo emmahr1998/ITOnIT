@@ -6,6 +6,7 @@ from app.schemas.auth import TokenResponse
 from app.schemas.company import CompanyRegisterRequest
 from app.schemas.platform import (
     CompanyDetailResponse,
+    CompanyListResponse,
     CompanySummaryResponse,
     PlatformLoginRequest,
     PlatformOverviewResponse,
@@ -92,7 +93,7 @@ def get_platform_overview(
     )
 
 
-@router.get("/companies", response_model=DataResponse[list[CompanySummaryResponse]])
+@router.get("/companies", response_model=CompanyListResponse)
 def list_platform_companies(
     search: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
@@ -102,7 +103,7 @@ def list_platform_companies(
     limit: int = Query(default=100, ge=1, le=500),
     platform_service: PlatformService = Depends(get_platform_service),
     _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
-) -> DataResponse[list[CompanySummaryResponse]]:
+) -> CompanyListResponse:
     companies, total = platform_service.list_companies(
         search=search,
         is_active=is_active,
@@ -111,8 +112,9 @@ def list_platform_companies(
         skip=skip,
         limit=limit,
     )
-    return DataResponse(
+    return CompanyListResponse(
         data=[CompanySummaryResponse.model_validate(c) for c in companies],
+        total=total,
         msg=f"Fetched {len(companies)} of {total} companies",
     )
 

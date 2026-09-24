@@ -30,6 +30,16 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
+  // The platform-level System Administrator has no tenant home at all - every
+  // page behind this guard assumes a company_id the backend will never give
+  // that account (see get_current_company_id's docstring), so it's sent to
+  // its own console unconditionally, regardless of allowedRoles. This is
+  // checked before allowedRoles below, not folded into it, since no tenant
+  // route should ever need to opt this role back in.
+  if (user.role === "System Administrator") {
+    return <Navigate to="/platform" replace />;
+  }
+
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     return <Navigate to="/dashboard" replace />;
   }
