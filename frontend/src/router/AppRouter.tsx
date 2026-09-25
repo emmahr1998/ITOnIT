@@ -25,6 +25,10 @@ import { PlatformCompaniesPage } from "../pages/platform/PlatformCompaniesPage";
 import { PlatformCompanyDetailPage } from "../pages/platform/PlatformCompanyDetailPage";
 import { PlatformCreateCompanyPage } from "../pages/platform/PlatformCreateCompanyPage";
 
+// The Electron build (VITE_APP_MODE=desktop, see companyStore.ts) enters at the
+// company login instead of the public marketing site; the web build is unchanged.
+const IS_DESKTOP = import.meta.env.VITE_APP_MODE === "desktop";
+
 const CREATE_TICKET_ROLES = ["Employee", "Company Administrator"] as const;
 const ADMIN_ROLES = ["Company Administrator"] as const;
 // Inventory pages are read-only for Technician (see InventoryPage/
@@ -37,7 +41,7 @@ export function AppRouter() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<LandingPage />} />
+        <Route path="/" element={IS_DESKTOP ? <Navigate to="/login" replace /> : <LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/platform/login" element={<PlatformLoginPage />} />

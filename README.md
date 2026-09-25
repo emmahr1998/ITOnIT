@@ -207,6 +207,33 @@ The app is now live at `http://localhost:5173` and talks to the backend at the U
 `VITE_API_BASE_URL`. Visiting `/` shows the public landing page; `/register` and
 `/login` are also reachable without an account.
 
+### Desktop app (Windows, Electron)
+
+`desktop/` is a thin Electron shell around the same React app (a separate npm
+package; the renderer source stays in `frontend/`). It opens at the company
+login instead of the public site. FastAPI and SQL Server are **not** bundled -
+the desktop app talks to a backend you run separately (the demo build points at
+`http://localhost:8000`).
+
+```bash
+cd desktop
+npm install
+npm run dist        # builds the desktop renderer, then release/ITOnIT-<version>-x64-setup.exe + -portable.exe
+```
+
+For development: run the backend, then `npm run dev:desktop` in `frontend/`, then
+`npm run dev` in `desktop/` (`npm start` runs the built renderer without Vite).
+
+The desktop app's origin is `app://itonit`, so the backend's `CORS_ORIGINS` must
+include it (exact origins only - never `*` or `null`):
+
+```
+CORS_ORIGINS=["http://localhost:5173","http://localhost:3000","app://itonit"]
+```
+
+The Windows build is **unsigned**, so Windows SmartScreen may show a warning
+("Windows protected your PC" - choose *More info*, then *Run anyway*).
+
 ## Running migrations
 
 ```bash
