@@ -7,11 +7,9 @@
  *     the current browser tab/session, forgotten once it's closed. A shared
  *     browser shouldn't silently remember which company someone last used
  *     across sessions.
- *   - desktop (VITE_APP_MODE="desktop", set by the Electron build):
- *     localStorage - remembered across app launches, exactly like a native
- *     app would. There is no Electron shell yet (it arrives in a later
- *     milestone), but this env-var gate needs no changes when it does -
- *     the Electron build simply sets VITE_APP_MODE=desktop.
+ *   - desktop (VITE_APP_MODE="desktop", set by frontend/.env.desktop for the
+ *     Electron app in desktop/): localStorage - remembered across app
+ *     launches, exactly like a native app would.
  * Both clients get the same "Change Company" affordance (clears the stored
  * value and returns to the company-code screen); only how long the value
  * survives differs.
