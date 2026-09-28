@@ -37,7 +37,6 @@ class Company(TimestampMixin, Base):
     company_code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     logo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    theme: Mapped[str] = mapped_column(String(20), nullable=False, default="light", server_default="light")
     timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="UTC", server_default="UTC")
     language: Mapped[str] = mapped_column(String(10), nullable=False, default="en", server_default="en")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")

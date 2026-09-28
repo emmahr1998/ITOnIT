@@ -236,10 +236,6 @@ export function CompanySettingsPage() {
         </p>
         <dl className={styles.preferencesGrid}>
           <div className={styles.preferenceItem}>
-            <dt className={styles.preferenceLabel}>Theme</dt>
-            <dd className={styles.preferenceValue}>{settings.theme}</dd>
-          </div>
-          <div className={styles.preferenceItem}>
             <dt className={styles.preferenceLabel}>Timezone</dt>
             <dd className={styles.preferenceValue}>{settings.timezone}</dd>
           </div>

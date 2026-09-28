@@ -610,7 +610,6 @@ class TestCompanyTimezoneBoundaries:
             id=COMPANY_A_ID,
             name="Company A",
             company_code="COMPANYA",
-            theme="light",
             timezone="Not/AZone",
             language="en",
             is_active=True,

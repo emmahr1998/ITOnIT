@@ -1,6 +1,6 @@
 :root {
   /* Color palette - ITOnIT brand orange (sampled from the official mascot
-     logo, src/assets/logo.png) as the sole accent, on a clean white/gray
+     logo, src/assets/logo-512.png) as the sole accent, on a clean white/gray
      canvas. Semantic status/priority badge colors below are intentionally
      left as their own multi-color system - they encode state, not brand. */
   --color-primary: #e13c0a;

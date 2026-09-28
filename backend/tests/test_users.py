@@ -29,7 +29,6 @@ def test_create_user_succeeds_for_admin(
             "phone_number": "555-0100",
             "password": "SuperSecret1!",
             "role_id": employee_role.id,
-            "theme": "dark",
         },
         headers=auth_headers(active_admin_user),
     )
@@ -348,13 +347,34 @@ def test_update_user_self_can_change_safe_fields(
 ) -> None:
     response = client.patch(
         f"/users/{active_employee_user.id}",
-        json={"first_name": "Evelyn", "theme": "dark"},
+        json={"first_name": "Evelyn", "phone_number": "555-0199"},
         headers=auth_headers(active_employee_user),
     )
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["first_name"] == "Evelyn"
-    assert body["theme"] == "dark"
+    assert body["phone_number"] == "555-0199"
+
+
+def test_user_responses_and_schemas_no_longer_include_theme(
+    client: TestClient,
+    active_employee_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+) -> None:
+    """The unused theme concept was removed: it is not in any user response,
+    and a stale client still sending it is harmlessly ignored (not a 422)."""
+    from app.schemas.user import UserCreate, UserResponse, UserUpdate
+
+    for schema in (UserCreate, UserUpdate, UserResponse):
+        assert "theme" not in schema.model_fields
+
+    response = client.patch(
+        f"/users/{active_employee_user.id}",
+        json={"first_name": "Evelyn", "theme": "dark"},
+        headers=auth_headers(active_employee_user),
+    )
+    assert response.status_code == 200
+    assert "theme" not in response.json()["data"]
 
 
 def test_update_user_self_forbidden_from_administrative_field(

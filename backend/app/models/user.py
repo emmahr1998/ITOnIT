@@ -49,7 +49,6 @@ class User(TimestampMixin, Base):
         ForeignKey("departments.id"), nullable=True
     )
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), nullable=False)
-    theme: Mapped[str | None] = mapped_column(String(20), nullable=True, default="light")
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="1"
     )

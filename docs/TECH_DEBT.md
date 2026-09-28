@@ -3,7 +3,53 @@
 Known gaps identified during development that are intentionally deferred to
 a specific later milestone rather than fixed opportunistically. Each entry
 records what's wrong, why it wasn't fixed when found, and which milestone
-owns the fix — so it isn't forgotten and isn't fixed twice.
+owns the fix — so it isn't forgotten and isn't fixed twice. Every entry below
+is tagged **✅ RESOLVED** (with the milestone/date it closed) or left open —
+open items are collected in the summary immediately below, then detailed in
+full further down this file, grouped by the area of the system they affect.
+
+## Current V1 limitations (read this first)
+
+Everything below is current, intentional, documented behavior of the
+application as it exists today — not a bug report, and not something left
+over from an earlier draft. None of these block using or presenting the
+project; they are exactly what a "V2 / production hardening" pass would pick
+up next (see `docs/PROFESSOR_QA.md` Q25).
+
+- **No server-side logout / token revocation.** Logout clears the client's
+  stored access/refresh tokens only; a still-valid, unexpired token issued
+  before logout would still be accepted if replayed. See
+  `docs/BACKEND_ARCHITECTURE.md` §9.
+- **No login rate limiting.** Nothing throttles repeated failed login
+  attempts against `/auth/login` or `/platform/login`.
+- **Some list pages fetch up to 500 rows and paginate client-side**, rather
+  than requesting each page from the server (e.g. the ticket list). The API
+  itself supports `skip`/`limit` server-side pagination; not every frontend
+  page uses it that way. See `docs/BACKEND_ARCHITECTURE.md` §16.
+- **No automated frontend test suite.** `tsc -b`, `oxlint`, and a full
+  production build are the frontend's automated checks; UI behavior is
+  verified manually. See the root `README.md`'s "Running tests" section.
+- **No password reset flow.** A Company Administrator can set another user's
+  password (`PATCH /users/{id}/password`); there is no self-service
+  "forgot password" email/token flow.
+- **Upload validation is extension- and size-based, not content-sniffed.** A
+  file whose actual content doesn't match its extension would pass
+  validation based on the extension alone (ticket attachments and company
+  logos both). See `docs/PROFESSOR_QA.md` Q23.
+- **The Electron desktop build is unsigned, with no auto-updater.** Windows
+  SmartScreen may warn on install; updates are manual (rebuild and
+  redistribute). See the root `README.md`'s desktop section.
+- **A consumed BULK inventory item can't be reserved again on the same
+  ticket** until a Company Administrator first undoes the consumption —
+  `ticket_inventory_usage` allows at most one row per `(ticket_id,
+  inventory_item_id)`. Intentional, approved V1 behavior, not a bug — see
+  `docs/database-design.md` §15.1.
+- **Ticket deletion and its inventory cleanup are two separate commits, not
+  one atomic transaction** (detailed below, "Inventory & Ticket integration"
+  §1).
+- **Several text columns are non-Unicode (`varchar`/`text`), not
+  `nvarchar`** — a non-ASCII character written to one of them is silently
+  replaced with `?` (detailed below, "Inventory & Ticket integration" §2).
 
 ## Multi-tenant migration (see the Company/SaaS architecture plan)
 
@@ -130,10 +176,19 @@ it, and the optional admin user scoped to it. Running the seed script (and
 `create_demo_users.py`) a second time is fully idempotent - no duplicate
 rows, no overwritten password hashes.
 
-### 3. `docs/BACKEND_ARCHITECTURE.md`, `BACKEND_API_GUIDE.md`, `BACKEND_SUMMARY.md`, `BACKEND_DIAGRAMS.md`, `database-design.md`, `PROFESSOR_DEMO_GUIDE.md`, `PROFESSOR_QA.md` predate the entire multi-tenant migration
+### 3. ✅ RESOLVED — `docs/BACKEND_ARCHITECTURE.md`, `BACKEND_API_GUIDE.md`, `BACKEND_SUMMARY.md`, `BACKEND_DIAGRAMS.md`, `database-design.md`, `PROFESSOR_DEMO_GUIDE.md`, `PROFESSOR_QA.md` predate the entire multi-tenant migration
 
 **Found:** during Milestone 3 (role consolidation), while updating role
 terminology (2026-08-06).
+
+**Resolved:** Milestone 14, Phase 14.3 (Final Documentation Rewrite) — all
+seven files (plus `BACKEND_FLOW.md`, `TECH_DEBT.md` itself, the root
+`README.md`, and `frontend/README.md`) were rewritten from the final
+implementation: multi-tenancy, the final four-role model, the complete
+15-table schema (including Inventory and its four tables), the platform
+console, analytics, and the Electron desktop app. No open item remains here —
+kept below for the historical record of what was wrong and why it was
+deferred this long.
 
 **What's wrong:** none of these seven files mention "Company" anywhere
 (verified with a direct grep) - they document the system exactly as it was

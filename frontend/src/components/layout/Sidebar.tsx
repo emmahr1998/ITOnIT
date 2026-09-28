@@ -41,9 +41,9 @@ interface NavSection {
  * into a MAIN section (Dashboard/Tickets) and a MANAGEMENT section (the
  * resources an admin configures, including Priorities - company-owned,
  * admin-editable data, not fixed system values; see the Priorities admin
- * page). System Administrator has no real UI yet - it's a platform-level
- * role served by its own console in a future milestone, not this
- * authenticated company app shell.
+ * page). System Administrator is a platform-level role served by its own
+ * console (PlatformLayout/PlatformSidebar under /platform), not this
+ * authenticated company app shell - hence the empty entry below.
  *
  * Inventory is the one Management resource Technician also gets a link to
  * (read-only - see InventoryPage's own canManage gating) since technicians

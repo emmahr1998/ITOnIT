@@ -182,7 +182,6 @@ class CompanyService:
         company = Company(
             name=payload.company_name,
             company_code=payload.company_code,
-            theme="light",
             timezone="UTC",
             language="en",
             is_active=True,

@@ -68,10 +68,9 @@ class TicketRepository(CompanyScopedRepository[Ticket]):
         filtering and Employee/Technician's forced ownership scope are both
         just filters.
 
-        skip/limit default to None (no pagination applied) so the existing
-        GET /tickets caller, which never passes them, keeps returning every
-        matching row exactly as before; GET /all-tickets is the caller that
-        supplies them.
+        skip/limit default to None (no pagination applied), so a caller that
+        omits them gets every matching row; GET /all-tickets is the caller
+        that supplies them.
         """
         stmt = (
             select(Ticket)

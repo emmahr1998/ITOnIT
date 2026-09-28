@@ -15,8 +15,9 @@ the "Default Company" row created by the add_companies_table migration
 hardcoded id - this is the same lookup pattern the add_company_id_scoping
 migration itself uses when backfilling pre-existing rows. This script does
 not create companies; it only seeds the one starting company/tenant a
-fresh install already has from migrations. Real per-company registration
-(and the seeding that comes with it) is a later milestone.
+fresh install already has from migrations. Additional companies are created
+through registration (POST /companies/register) or, by a System
+Administrator, POST /platform/companies - each seeds its own starter data.
 
 Atomicity: one commit at the end, one rollback on any exception - either
 every step below succeeds or none of it is persisted. This is deliberate:

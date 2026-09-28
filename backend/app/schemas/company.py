@@ -61,7 +61,6 @@ class CompanySettingsResponse(BaseModel):
     company_code: str
     contact_email: str | None
     logo_url: str | None
-    theme: str
     timezone: str
     language: str
 
@@ -71,9 +70,9 @@ class CompanyUpdateRequest(BaseModel):
 
     Partial update: a field left out of the request body is left
     unchanged. contact_email may be explicitly cleared by sending an empty
-    string. theme/timezone/language are deliberately not editable here -
+    string. timezone/language are deliberately not editable here -
     they're simple stored settings for now (see Company model), with no
-    theming/localization/timezone-conversion system built yet.
+    localization/timezone-conversion system built yet.
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
