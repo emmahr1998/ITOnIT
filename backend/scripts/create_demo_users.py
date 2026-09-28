@@ -1,7 +1,9 @@
 """Development-only script: create demo users for manual testing via Swagger.
 
-There is no public registration endpoint (by design), so this exists purely
-to let a developer create a user in each role without one. It lives outside
+Company registration (POST /companies/register) only ever creates a
+company's first Company Administrator - Employees and Technicians are created
+by an administrator afterwards - so this exists purely to give a developer a
+user in each role on the Default Company without that setup. It lives outside
 the `app` package on purpose - it is a dev tool, not part of the deployable
 application - and reuses the same building blocks as
 app.scripts.seed_initial_data (UserRepository, RoleRepository, hash_password,

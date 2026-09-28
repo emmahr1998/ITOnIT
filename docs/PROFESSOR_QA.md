@@ -1,224 +1,210 @@
 # Questions my professor may ask
 
-Answers are grounded in the actual code — file/class/function names are given so any answer
-can be verified on the spot. See `docs/BACKEND_ARCHITECTURE.md` for full detail behind any
-answer.
+Answers are grounded in the actual, final code — file/class/function names are given so any
+answer can be verified on the spot. See `docs/BACKEND_ARCHITECTURE.md` and
+`docs/database-design.md` for full detail behind any answer.
 
 ### 1. Why did you choose FastAPI?
 It generates OpenAPI/Swagger documentation automatically from the same type-annotated route
 functions and Pydantic models used for validation, has first-class async support, and its
 dependency-injection system (`Depends(...)`) is what makes it possible to cleanly separate
-authentication, authorization, and database-session setup from business logic without
-duplicating that code in every route (see `app/dependencies/`).
+authentication, authorization, company scoping, and database-session setup from business
+logic without duplicating that code in every route (see `app/dependencies/`).
 
-### 2. Why separate SQLAlchemy models and Pydantic schemas instead of using the model directly as the API shape?
+### 2. Why React?
+A component model that maps cleanly onto this app's page/widget structure (one component per
+route, shared primitives like `StatCard`/`Modal`), a huge ecosystem (React Router for the
+role-gated route tree, Axios for the API client), and — practically — it's what lets the exact
+same frontend be reused unmodified as the Electron desktop renderer (see Q29), rather than
+building and maintaining two UIs.
+
+### 3. Why SQL Server?
+A production-grade relational database with strong constraint/transaction support (foreign
+keys, `CHECK` constraints, unique indexes — all used extensively, e.g. the inventory tracking
+rules in `app/models/inventory_item.py`), widely used in the kind of enterprise/IT-department
+environment this project models, and well supported by SQLAlchemy + `pyodbc` + Alembic.
+
+### 4. Why SQLAlchemy and Alembic instead of `Base.metadata.create_all()`?
+`create_all()` can only create tables that don't exist yet — it can't apply a column rename,
+backfill data, or drop a column safely. Alembic migrations are reviewable Python scripts,
+checked into Git, applied in a defined order, and reversible. This project's own migration
+history demonstrates why repeatedly: converting a free-text `users.department` column into a
+real `Department` table without losing data, converting `Ticket.priority` from a plain string
+into a `Priority` table + FK, and — most recently — `aa1908b341bb`, which drops the unused
+`theme` columns after first discovering their SQL-Server-generated default-constraint names
+dynamically (a plain `drop_column` alone would have failed).
+
+### 5. How is authentication secured?
+Argon2 password hashing (`pwdlib.PasswordHash.recommended()`, `app/core/security.py`) — never
+plaintext, never logged. JWT access tokens (short-lived, default 30 min) and refresh tokens
+(longer-lived, default 7 days), each carrying a `"type"` claim so one can never be substituted
+for the other. Login is company-scoped: `POST /auth/login` takes a `company_code` and looks
+the user up *within that company only*; every failure mode (unknown company, unknown user,
+wrong password, inactive account) collapses into the identical `401`, so a caller can't use the
+response to probe which company codes or usernames exist. A user's role is never trusted from
+the token itself — every request re-loads the user fresh from the database (see Q16).
+
+### 6. How are passwords stored?
+Argon2 hashing via `pwdlib.PasswordHash.recommended()`. Plaintext is never stored, logged, or
+returned in any response. `verify_password` re-hashes the supplied plaintext against the
+stored hash's own embedded salt/parameters and compares — the plaintext itself is only ever
+held in memory for the duration of that one comparison.
+
+### 7. How is multi-tenancy enforced?
+Structurally, not by convention. Every tenant-owned table carries a `company_id`. Every
+tenant-scoped repository extends `CompanyScopedRepository` (`app/repositories/base.py`),
+which overrides `get_by_id`/`get_all` to always filter by `company_id`, and is constructed
+only with the authenticated caller's own `company_id` — resolved by
+`get_current_company_id` from their JWT-loaded user row, **never** accepted as a client
+parameter anywhere. A cross-company id simply doesn't exist as far as that repository is
+concerned — it returns "not found," identical to a genuinely nonexistent id, never a distinct
+error that would confirm another company's row exists. This is **application-level scoping**,
+not a SQL Server engine feature like Row-Level Security — worth being precise about if asked.
+
+### 8. Why are users deactivated instead of hard-deleted?
+Deleting a user would either orphan or cascade-delete every ticket, comment, attachment, and
+history row they're attributed to — destroying the exact audit trail the system exists to
+keep. `User.is_active = False` (`PATCH /users/{id}`) blocks login and every already-issued
+token's continued use of protected routes, while every historical row that references the
+user (as creator, technician, commenter, uploader, or history actor) stays intact and
+correctly attributed.
+
+### 9. Why do attachments belong to tickets rather than comments?
+This was a deliberate final design decision: an attachment is evidence about the *ticket*
+(a screenshot of the error, a photo of the broken hardware), not about one specific message
+in the conversation. `Attachment` (`app/models/attachment.py`) has a `ticket_id` foreign key
+and no `comment_id` column or relationship at all — verify directly against
+`docs/database-design.md` §12.1. An earlier design draft did include an optional `comment_id`;
+it was never carried into the implementation.
+
+### 10. Why use a Locations table instead of free text?
+The same reasoning as Categories/Priorities/Departments: a fixed, company-managed list keeps
+data consistent for filtering and reporting, and lets a Company Administrator add new
+locations without a code change. `Location.is_active` is genuinely enforced (unlike a purely
+decorative flag) — `TicketService._get_location_or_raise` rejects a deactivated location for
+*new* selection, while a ticket that already references it is completely unaffected, which is
+exactly why deactivation (not deletion) was chosen.
+
+### 11. How does inventory integrate with tickets?
+Two tables. `TicketInventoryUsage` represents only the **current** relationship between a
+ticket and an inventory item (`RESERVED` or `CONSUMED` — the row is deleted the moment it
+stops being true). `InventoryTransaction` is a separate, permanent, append-only audit trail —
+one row per business event (reserve/release/consume/undo), never updated or deleted. A
+Technician assigned to a ticket can reserve an item, then consume it (decrementing BULK stock,
+or marking a SERIALIZED unit `IN_USE` with the ticket's requester as its holder); only a
+Company Administrator can undo a consumption. See `docs/database-design.md` §14–15 and
+`docs/BACKEND_DIAGRAMS.md` §7 for the full state machine.
+
+### 12. What is the difference between Company Administrator and System Administrator?
+Company Administrator is a **per-company** role — any number may exist per company, all with
+identical permissions, scoped entirely to their own company's data (`company_id` set on their
+user row). System Administrator is a **single, platform-level** account
+(`company_id IS NULL`), served by an entirely separate route group (`/platform/...`) and its
+own login (`POST /platform/login`, no company code). A System Administrator can see *across*
+every company (overview, company list/detail, activate/deactivate, provision) but has **no
+access to any tenant's tickets/users/inventory** through the normal tenant endpoints — there
+is no code path where `get_current_company_id` succeeds for that account at all.
+
+### 13. Why Electron for the desktop app?
+It lets the exact same React application ship as a native-feeling Windows app with no
+frontend rewrite — `desktop/` is a thin shell (`desktop/main.js`) that loads the same built
+renderer (`frontend/dist-desktop/`) the web build produces, just from a different origin. It
+was the pragmatic choice for "same app, another distribution channel" given the project was
+already a React SPA.
+
+### 14. Does Electron contain the backend or the database?
+No. `desktop/main.js` creates a `BrowserWindow` and loads the frontend — it starts no Python
+process and no database server. The desktop app talks to an ITOnIT backend running elsewhere
+over plain HTTP/JSON, exactly like the web build does; the only backend-facing difference is
+that its production origin is the custom `app://itonit` protocol instead of `http://
+localhost:5173`, which is why that exact origin must be added to the backend's `CORS_ORIGINS`
+allowlist for the packaged app to work at all.
+
+### 15. How is analytics scoped?
+`AnalyticsService` never re-derives its own visibility rule — it calls the identical
+`TicketService.resolve_ownership_scope` normal ticket listing uses, so `GET /analytics/tickets`
+can never show a different set of tickets than `GET /all-tickets` would for the same user.
+Company Administrator gets the full company-wide picture; Technician's numbers are computed
+only over tickets assigned to them; Employee's only over tickets they created. Inventory
+analytics is narrower still: Employee has no inventory access at all (refused outright), and
+Technician gets a single scoped number (`reserved_for_my_tickets_count`) rather than the
+company-wide breakdowns Company Administrator sees.
+
+### 16. How do you know a user's role without storing it in the JWT?
+The JWT only carries `sub` (user id), `type`, `iat`, `exp` — no role or company. `get_current_user`
+(`app/dependencies/auth.py`) looks the user up fresh from the database on *every* request via
+`UserRepository.get_by_id` (which also eager-loads their company and role). This means a role
+change, a deactivation, or a company suspension takes effect on the very next request, not
+just after the token expires — a deliberate trade-off of one extra DB lookup per request for
+correctness.
+
+### 17. Why separate SQLAlchemy models and Pydantic schemas instead of using the model directly as the API shape?
 A model represents *storage* (every column, including `User.password_hash`). A schema
 represents *one specific HTTP message*. Because no response schema in `app/schemas/`
 declares `password_hash`, it is structurally impossible to leak it — not because someone
 remembered to filter it, but because the field doesn't exist on the schema that serializes
 the response.
 
-### 3. Why use Alembic instead of `Base.metadata.create_all()`?
-`create_all()` can only create tables that don't exist yet — it can't apply a column rename,
-backfill data, or drop a column safely. Alembic migrations are reviewable Python scripts,
-checked into Git, applied in a defined order, and reversible. This project's own migration
-history demonstrates why: `496ee3278515_add_departments_and_user_profile_fields.py` had to
-convert an existing free-text `users.department` column into a real `Department` table
-*without losing any data* — something `create_all()` simply cannot do.
-
-### 4. Why use JWT instead of server-side sessions?
-JWT is stateless — the server doesn't need to store session data anywhere to validate a
-request; it just verifies the token's signature and reads its claims (`app/core/security.py`).
-This fits a REST API that a future React frontend will call from the browser without a
-shared server-side session store.
-
-### 5. What is the difference between access and refresh tokens in this system?
-An access token is short-lived (`ACCESS_TOKEN_EXPIRE_MINUTES`, default 30 minutes) and is
-sent on every authenticated request. A refresh token is long-lived (`REFRESH_TOKEN_EXPIRE_MINUTES`,
-default 7 days) and is used *only* to obtain a new access token via `POST /auth/refresh`,
-without re-entering credentials. Both carry a `"type"` claim (`"access"` or `"refresh"`) that
-`decode_access_token`/`decode_refresh_token` check explicitly — an access token cannot be
-used where a refresh token is expected, and vice versa (`app/core/security.py`).
-
-### 6. How are permissions enforced?
+### 18. How are permissions enforced?
 Two layers. Role-based: `require_roles(*names)` (`app/dependencies/auth.py`), a single
 factory function every route-level role check goes through — never duplicated inline.
 Ownership-based: individual services (`TicketService._ensure_can_view`,
-`CommentService`'s author check, `UserService`'s self-vs-admin split) enforce "is this
-*specific* resource yours" beyond what a role alone can express.
+`CommentService`'s author check, `TicketInventoryService`'s assigned-technician check,
+`UserService`'s self-vs-admin field split) enforce "is this *specific* resource yours" beyond
+what a role alone can express.
 
-### 7. Why store attachment files outside SQL Server?
-Storing large binary blobs in a relational database bloats the database, slows backups, and
-wastes the database engine's strengths on something a filesystem does better. `Attachment`
-(`app/models/attachment.py`) stores only metadata and a `file_path`; the actual bytes live
-under `storage/attachments/`, written/read by `StorageService`
-(`app/services/storage_service.py`).
-
-### 8. How do you prevent an employee from assigning a technician?
-`PATCH /tickets/{id}/assign` is gated by `require_roles("Manager", "Administrator")`
-(`_ASSIGN_ROLES` in `app/api/routes/tickets.py`) — an Employee's request never even reaches
-`TicketService.assign_technician`; it's rejected with 403 at the dependency layer.
-
-### 9. How is ticket history implemented?
-A dedicated `TicketHistory` table (`app/models/ticket_history.py`), one row per field-level
-change: `field_name`, `old_value`, `new_value`, who changed it, when. `HistoryService.record()`
-(`app/services/history_service.py`) is the single method that ever constructs a row —
-`TicketService`, `CommentService`, and `AttachmentService` all call it, rather than each
-writing history rows independently.
-
-### 10. What happens if a database transaction fails?
+### 19. What happens if a database transaction fails?
 Repositories never call `commit()` — only `add`/`flush`/`delete`. The owning Service calls
 `commit()` once, after every step of one logical operation has succeeded. If a database
-constraint is violated mid-operation (e.g. a race on a unique `ticket_number`), the service
-catches `IntegrityError`, calls `self._db.rollback()`, and either retries (ticket-number
-generation, up to 3 attempts) or re-raises its own domain exception (e.g.
-`CategoryNameConflictError`), which the route turns into a 409.
+constraint is violated mid-operation (e.g. a race on a unique `ticket_number` or
+`company_code`), the service catches `IntegrityError`, calls `self._db.rollback()`, and either
+retries (ticket-number generation, up to 3 attempts) or re-raises its own domain exception
+(e.g. `CompanyCodeConflictError`), which the route turns into a 409.
 
-### 11. How would you scale this system?
-The most direct paths, given the current architecture: run multiple stateless FastAPI/
-uvicorn workers behind a load balancer (the app holds no in-process session state — every
-request re-authenticates via JWT), add a connection pool tuned for concurrency, add caching
-for read-heavy, rarely-changing data (categories, departments, priorities), and move
-attachment storage to a shared/object store so it isn't tied to one server's local disk (see
-Q17).
+### 20. Why does `username` also accept an email address at login?
+`UserRepository.get_by_username_or_email()` runs one query that matches either column, within
+the resolved company. This was a deliberate compatibility decision: the API documents a single
+login field (`username`), but an account identified only by email still works, without adding
+a second documented login parameter.
 
-### 12. What would you change before production?
-See the "Security review" section of `docs/BACKEND_ARCHITECTURE.md` §22 — in short: add
-HTTPS termination, token revocation, rate limiting on login, malware scanning for uploads,
-move attachments to cloud/object storage, add structured logging/monitoring, tighten
-`CORSMiddleware`'s allowed origins to the real deployed frontend URL only (it already exists
-in `app/main.py` with a configurable whitelist via the `CORS_ORIGINS` env var — this is about
-narrowing it further for production, not adding it from scratch), and move secrets into a
-managed secret store instead of a local `.env` file.
-
-### 13. Why does `username` also accept an email address at login?
-`UserRepository.get_by_username_or_email()` (`app/repositories/user.py`) runs one query that
-matches either column, case-insensitively. This was a deliberate compatibility decision: the
-API documents a single login field (`username`), but existing accounts that were only ever
-identified by email still work, without adding a second documented login parameter.
-
-### 14. Why is `PATCH /tickets/{id}` different from `PUT /categories/{id}`?
-`PATCH /tickets/{id}` (`app/schemas/ticket.py`'s `TicketPatch`) is a **partial** update —
-every field is optional, and only the fields actually present in the request are changed.
-`PUT /categories/{id}` (`CategoryUpdate`) is a **full replacement** — both `name` and
-`description` must be sent every time, because `PUT` semantics mean "this is now the
-complete representation of the resource." The project intentionally uses `PATCH` for the
-newer ticket-editing endpoint and kept `PUT`'s full-replacement semantics on the
-pre-existing category endpoint.
-
-### 15. Why doesn't the response format look the same on every endpoint?
-Newer endpoints (Departments, Priorities, Users, `POST /ticket-new`, `GET /all-tickets`,
-`PATCH /tickets/{id}`) return a `{"data": ..., "msg": ...}` envelope
-(`app/schemas/response.py`'s `DataResponse[T]`). Older, pre-existing endpoints (Categories,
-Comments, Attachments, History, `GET /tickets/{id}`, `assign`, `status`, Auth) return the
-object/array directly. This was a deliberate choice, documented in the schema's own
-docstring, not to retrofit the wrapper onto working endpoints just for consistency's sake.
-
-### 16. How do you know a user's role without storing it in the JWT?
-The JWT only carries `sub` (user id), `type`, `iat`, `exp` — no role or name.
-`get_current_user` (`app/dependencies/auth.py`) looks the user up fresh from the database on
-*every* request via `UserRepository.get_by_id`. This means a role change or account
-deactivation takes effect on the very next request, not just after the token expires — a
-deliberate trade-off of one extra DB lookup per request for correctness.
-
-### 17. Why is the file storage local disk instead of cloud storage?
-Simplicity for a university project — `StorageService` (`app/services/storage_service.py`)
-is a small, self-contained class with `save`/`load`/`delete`/`generate_stored_filename`
-methods. Because `AttachmentService` only ever calls those four methods, swapping in an
-S3/Azure-Blob-backed implementation later would not require changing any calling code — it's
-listed explicitly as a needed change before real production deployment.
-
-### 18. How is SQL injection prevented?
-Every single query in `app/repositories/` is built with SQLAlchemy's `select()` query
-builder and bound parameters — user input is never string-formatted into SQL. The only raw
-SQL (`op.execute(...)`) anywhere in the codebase lives inside Alembic migration scripts, used
-for one-time schema-migration data backfills with no user-controlled input, never in a
+### 21. How is SQL injection prevented?
+Every single query in `app/repositories/` is built with SQLAlchemy's `select()` query builder
+and bound parameters — user input is never string-formatted into SQL. The only raw SQL
+(`op.execute(...)`) anywhere in the codebase lives inside Alembic migration scripts (e.g.
+discovering and dropping a SQL-Server-generated default-constraint name in `aa1908b341bb`),
+used for one-time schema-migration operations with no user-controlled input, never in a
 request-serving code path.
 
-### 19. How are passwords protected?
-Argon2 hashing via `pwdlib.PasswordHash.recommended()` (`app/core/security.py`). Plaintext is
-never stored, logged, or returned in any response. `verify_password` re-hashes the supplied
-plaintext against the stored hash's own embedded salt/parameters and compares — the
-plaintext itself is only ever held in memory for the duration of that one comparison.
+### 22. What's the difference between 401 and 403 in this API?
+401 means "I don't know who you are" — missing, malformed, expired, or wrong-type token, or an
+inactive user. 403 means "I know who you are, but you're not allowed to do this" — wrong role
+(`require_roles`), an ownership violation (e.g. a Technician trying to view a ticket not
+assigned to them), or a company-less account (the System Administrator) hitting a tenant-only
+route.
 
-### 20. What's the difference between 401 and 403 in this API?
-401 means "I don't know who you are" — missing, malformed, expired, or wrong-type token, or
-an inactive user (`app/dependencies/auth.py`). 403 means "I know who you are, but you're not
-allowed to do this" — wrong role (`require_roles`) or an ownership violation (e.g. a
-Technician trying to view a ticket not assigned to them, `TicketPermissionError`).
+### 23. Is there any protection against uploading a malicious file?
+Extension allow-listing (`.png/.jpg/.jpeg/.pdf/.txt/.docx/.xlsx`) and a size cap, both in
+`AttachmentService.upload_attachment`, plus a randomly generated on-disk filename (the
+client's filename is never trusted for storage) and path-traversal defense in
+`StorageService`. There is **no content scanning** — a file whose actual content doesn't match
+its extension would pass validation based on the extension alone. This is a documented,
+current V1 limitation, not an oversight — see `docs/TECH_DEBT.md`.
 
-### 21. How does the system decide which tickets an Employee can see?
-`TicketService.list_tickets` (`app/services/ticket_service.py`) forcibly overwrites the
-`created_by` filter with the caller's own id for anyone who isn't a Technician or a
-Manager/Administrator — regardless of what filter value the client sent in the query string.
-This is server-enforced, not client-trusted, confirmed by a dedicated test
-(`test_all_tickets_employee_cannot_bypass_scope_via_filter`).
-
-### 22. Why do Managers see all tickets but can't edit other users?
-Two different, independently-designed authorization rules: ticket visibility is checked in
-`TicketService._is_manager_or_admin` (both Manager and Administrator bypass ownership
-scoping), while user-editing is checked in `UserService.update_user` against a stricter
-`current_user.role.name == "Administrator"` check specifically. This means a Manager has
-broad *read* access across tickets but no special *write* access to other users' accounts —
-only an Administrator can edit someone else's account. This is a real, intentional asymmetry
-in the current permission design, worth being able to explain if asked why it isn't
-symmetric.
-
-### 23. What testing strategy did you use, and why no real test database?
+### 24. What testing strategy did you use, and why no real test database?
 Every `Service` accepts its repository as an optional constructor argument
 (`repository: XRepository | None = None`), defaulting to the real, SQLAlchemy-backed one.
-Tests (`tests/conftest.py`) inject small, hand-written in-memory `Fake*Repository` classes
-instead — same method signatures, backed by plain Python dicts. This makes the 250-test suite
-run in seconds with no database dependency, while still exercising real HTTP routing, real
-JWT creation/validation, and the real business-rule code paths.
+Tests (`tests/conftest.py`) inject small, hand-written in-memory fake repository classes
+instead — same method signatures, backed by plain Python dicts. This makes the full suite
+(705 tests, as of this writing) run without a database dependency, while still exercising
+real HTTP routing, real JWT creation/validation, and the real business-rule code paths.
+Correctness against the actual, migrated SQL Server schema is verified separately, via
+`alembic check` and a manual smoke test before each milestone closes.
 
-### 24. How do you verify the tests actually reflect the real database schema?
-Separately from `pytest` — via `alembic check` (confirms the SQLAlchemy models match the
-live database with no pending schema drift) and a manual smoke test against the real,
-migrated SQL Server database (login, refresh, create a department/priority/user/ticket
-through the actual running app, then clean up the test data). This is documented as a
-deliberate two-track verification approach: fast, DB-free unit/integration tests for logic
-correctness, plus a slower, real-DB pass for schema correctness.
-
-### 25. Why does `Ticket.priority` no longer exist as a plain enum column?
-It was replaced by a `Priority` table and a `priority_id` foreign key
-(migration `b8c5e972dfbf_add_priorities_table_and_migrate_ticket_.py`) so priorities can be
-added, renamed, or reordered by a Manager/Administrator through the API
-(`POST /priorities`, `PATCH /priorities/{id}`) without a code change or a new deployment —
-the same reasoning applies to why `Department` replaced a free-text `users.department`
-string column.
-
-### 26. What happens if two people try to create a ticket at the exact same time?
-`TicketService._persist_new_ticket` wraps the insert in a retry loop (max 3 attempts): if the
-computed `ticket_number` collides with one another concurrent request just inserted (caught
-as a database `IntegrityError` on the unique constraint), it rolls back and generates a new
-number before retrying — rather than letting the second request fail outright.
-
-### 27. Why can't a closed ticket be reopened?
-`TicketService._STATUS_TRANSITIONS[TicketStatus.CLOSED]` is an empty `frozenset()` — no
-status is a legal next step from `CLOSED` in the current business rules. This is a real,
-current limitation of the code, not an oversight in this documentation — if the team wants
-reopening later, it would need a new transition added to that dictionary plus a role
-decision about who's allowed to do it.
-
-### 28. Does deleting a ticket delete its comments and attachments too?
-Yes — `Ticket.comments`, `Ticket.attachments`, and `Ticket.history` are all declared with
-`cascade="all, delete-orphan"` in `app/models/ticket.py`, so `DELETE /tickets/{id}`
-(Manager/Administrator only) permanently removes the ticket and everything attached to it,
-including its physical attachment files being orphaned on disk (the DB rows are deleted, but
-nothing currently deletes the corresponding files from `storage/attachments/` — a gap worth
-mentioning if asked about it directly).
-
-### 29. Is there any protection against uploading a malicious file?
-Extension allow-listing and a size cap, both in `AttachmentService.upload_attachment`
-(`app/services/attachment_service.py`), plus path-traversal defense in `StorageService`
-(rejecting any filename that would resolve outside the storage root). There is **no content
-scanning** — a `.png` file that is actually something else in disguise would pass validation
-based on its extension alone. This is explicitly listed as a pre-production gap.
-
-### 30. How does a React frontend actually talk to this backend?
-Exactly as documented in `docs/BACKEND_API_GUIDE.md` — see the `frontend/` directory in this
-same repository for the real implementation. `app/main.py` registers `CORSMiddleware` with an
-allowed-origins whitelist read from the `CORS_ORIGINS` env var (defaulting to the Vite dev
-server's `localhost:5173`), so the browser's same-origin policy doesn't block the frontend's
-requests. See `docs/BACKEND_ARCHITECTURE.md` §23 for the full integration walkthrough.
+### 25. What would you improve in a production V2?
+See `docs/TECH_DEBT.md` for the full, current list — in short: server-side token revocation
+(so logout is real, not just client-side), rate limiting on login, content-based upload
+validation instead of extension/size alone, a password-reset flow, an automated
+frontend test suite, server-driven pagination everywhere (some lists currently fetch up to
+500 rows and paginate client-side), code signing and an auto-updater for the Electron build,
+and lifting the current one-consumption-per-ticket-per-BULK-item limitation once
+`InventoryTransaction`'s full event history can back a richer usage model.

@@ -61,9 +61,9 @@ def get_current_active_user(current_user: User = Depends(get_current_user)) -> U
     eager-loaded by UserRepository.get_by_id, not lazy-loaded), not just at
     login - suspending a company immediately revokes access for all of its
     users, even ones holding a still-valid, unexpired access token. A user
-    with no company (company_id is None - reserved for the future System
-    Administrator, who logs in through a separate /platform/login rather
-    than this dependency chain at all) has nothing to check here.
+    with no company (company_id is None - the platform-level System
+    Administrator, who logs in through the separate /platform/login) has no
+    company to check here.
     """
     if not current_user.is_active:
         raise HTTPException(
@@ -84,15 +84,14 @@ def get_current_company_id(current_user: User = Depends(get_current_active_user)
     company_id from - always derived from the authenticated user's own row,
     never from a client-supplied header/param/body field, anywhere.
 
-    Every user reachable through this dependency has a company today
-    (company_id is nullable on User only to make room for a future,
-    platform-level System Administrator account, which does not exist yet
-    and has no route that could reach this dependency). Raising here rather
-    than silently returning None if that ever changed without a
-    corresponding route change is deliberate: a `WHERE company_id = NULL`
-    query would just as safely return nothing, but failing loudly is a
-    clearer signal that a route needs the not-yet-built System
-    Administrator exception, not that data quietly vanished.
+    Every tenant user has a company (company_id is nullable on User only
+    for the platform-level System Administrator account, which is served
+    exclusively by the /platform routes and never depends on this). A
+    company-less account that reaches a tenant route is refused here with a
+    clear 403 rather than silently returning None: a `WHERE company_id =
+    NULL` query would just as safely return nothing, but failing loudly
+    makes it obvious the route is tenant-only, not that data quietly
+    vanished.
     """
     if current_user.company_id is None:
         raise HTTPException(

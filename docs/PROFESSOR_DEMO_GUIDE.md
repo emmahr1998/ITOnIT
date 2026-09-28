@@ -1,202 +1,149 @@
 # ITOnIT — Professor Demo Guide
 
-A step-by-step script for demonstrating the backend live, entirely through Swagger — no
-frontend needed. Budget ~15–20 minutes for the full walkthrough. Every step below has been
-run against the real project exactly as written.
+A connected, ~8–12 minute live walkthrough of the final application through the actual
+frontend (web build) — not Swagger. Swagger (`http://127.0.0.1:8000/docs`) is still available
+as a fallback or for API-level questions; see `docs/PROFESSOR_QA.md` and
+`docs/BACKEND_API_GUIDE.md` for that angle. Every step below uses real, existing
+routes/pages/roles and real seeded data — nothing here is aspirational, and every value below
+(company code, usernames, ticket number, inventory item) was produced by actually running the
+seed scripts and verified live before this guide was written.
 
-Demo accounts (seeded by `scripts/create_demo_users.py` — see Step 2):
+**Demo accounts** (seeded by `python -m app.scripts.seed_demo_data`, all on company code
+`DEMO001` / **ITOnIT Demo Co** — a dedicated demo company, kept separate from the
+`DEFAULT001` company `scripts/create_demo_users.py` seeds):
 
 | Role | Username | Password |
 |---|---|---|
-| Employee | `employee` | `Employee123!` |
+| Company Administrator | `admin` | `DemoAdmin123!` |
 | Technician | `technician` | `Technician123!` |
-| Manager | `manager` | `Manager123!` |
-| Administrator | `admin` | `Admin123!` |
+| Employee | `employee` | `Employee123!` |
+| Employee (2nd) | `employee2` | `Employee2Pass123!` |
 
-> **Known quirk, worth knowing before you're live:** if your local dev database was seeded
-> earlier via `app.scripts.seed_initial_data` with an `INITIAL_ADMIN_EMAIL`/
-> `INITIAL_ADMIN_PASSWORD` set in `.env`, the `admin` account may already exist with **that**
-> password instead of `Admin123!` (the demo script never overwrites an existing account,
-> matched by username or email). If `admin` / `Admin123!` fails to log in, check
-> `INITIAL_ADMIN_PASSWORD` in your `.env` file and use that instead — it is not a bug, just
-> two different scripts both being allowed to create the same account.
+The one platform-level **System Administrator** account has no fixed demo password — it comes
+from your own `PLATFORM_ADMIN_EMAIL`/`PLATFORM_ADMIN_PASSWORD` in `backend/.env`, created by
+running `python -m app.scripts.seed_initial_data` once after setting them. Do this before the
+demo and use those credentials at Step 9 — never write the actual password into this file.
 
 ---
 
-## 1. Start the backend
-
-From the `backend/` directory:
+## Setup (before the audience arrives)
 
 ```bash
-uvicorn app.main:app --reload
-```
-
-You should see Uvicorn report it's running on `http://127.0.0.1:8000`. Leave this terminal
-open and running for the rest of the demo.
-
-## 2. Run migrations and seed data
-
-In a second terminal, also from `backend/`:
-
-```bash
+cd backend
 python -m alembic upgrade head
 python -m app.scripts.seed_initial_data
 python scripts/create_demo_users.py
+python -m app.scripts.seed_demo_data
+uvicorn app.main:app --reload
 ```
-
-- The first command applies every migration up to the latest schema.
-- The second seeds the four roles (Employee/Technician/Manager/Administrator) and the four
-  default priorities (Low/Medium/High/Critical) — safe to re-run, it skips anything that
-  already exists.
-- The third creates the four demo accounts in the table above — also safe to re-run.
-
-(If this is a completely fresh database, also run `POST /categories` and `POST /locations`
-once each with a couple of sample values before Step 5, since a fresh install has none yet —
-see Step 11.)
-
-## 3. Open Swagger
-
-Navigate to **`http://127.0.0.1:8000/docs`** in a browser. This is FastAPI's auto-generated,
-interactive API documentation — every endpoint, request shape, and response shape you see is
-generated directly from the running code, not hand-written.
-
-Point out: the padlock icon next to protected endpoints, and the **Authorize** button at the
-top right — that's what Step 4 uses.
-
-## 4. Log in
-
-1. Expand **`POST /auth/login`**, click **Try it out**.
-2. Request body:
-   ```json
-   {"username": "manager", "password": "Manager123!"}
-   ```
-3. Click **Execute**. The response body contains `access`, `refresh`, and `token_type`.
-4. Copy the `access` token value (without quotes).
-5. Click **Authorize** at the top of the page, paste the token into the value field, click
-   **Authorize**, then **Close**.
-
-Every subsequent "Try it out" call in this Swagger session now sends
-`Authorization: Bearer <token>` automatically. We're logged in as **Manager** for the next
-few steps.
-
-Optional talking point: expand **`GET /auth/me`** and execute it with no body — it returns
-the current user's profile and role, proving the token round-trips correctly.
-
-## 5. Create a ticket
-
-We need a category, priority, and (optionally) location id first. If they don't already
-exist:
-- `GET /categories` — note an existing `id` (e.g. `1` for "Hardware"), or `POST /categories`
-  with `{"name": "Hardware"}` if the list is empty.
-- `GET /priorities` — the four defaults (`Low`/`Medium`/`High`/`Critical`) should already
-  exist from Step 2.
-- `GET /locations` — see Step 11 if empty.
-
-Expand **`POST /ticket-new`**, execute with:
-```json
-{
-  "title": "Laptop does not power on",
-  "description": "Employee's laptop shows no signs of life when the power button is pressed.",
-  "location_id": 1,
-  "category_id": 1,
-  "priority_id": 3
-}
+In a second terminal:
+```bash
+cd frontend
+npm run dev
 ```
-The response is `201`, wrapped in `{"data": {...}, "msg": "Ticket created successfully"}`.
-Point out: `status` is `"NEW"`, `ticket_number` follows the `IT-<year>-<sequence>` format,
-`created_by` is the currently authenticated user (a Manager here, since Manager is allowed to
-create tickets too — not just Employees), and `location`/`category`/`priority` are returned
-as full nested objects, not just ids. **Copy the ticket's `id`** — every remaining step uses
-it.
+Open `http://localhost:5173`. All four commands above are idempotent — safe to re-run this
+exact sequence before every rehearsal or the real presentation without creating duplicates.
 
-## 6. Assign a technician
+---
 
-Still authenticated as Manager. You'll need the technician's user id —
-`GET /users?role_id=<technician's role id>` (or just `GET /users` and find `"username":
-"technician"` in the list) to get it.
+## 1. Public website (~1 min)
 
-Expand **`PATCH /tickets/{ticket_id}/assign`**, fill in the ticket id, execute with:
-```json
-{"technician_id": <technician's id>}
-```
-Response (bare, `200`): `assigned_technician` is now populated, and `status` has
-auto-advanced from `NEW` to `ASSIGNED` — point out this transition happens automatically as
-part of assignment, not through the status endpoint.
+Land on `/` — the public marketing page: what ITOnIT is, links to **Sign In** and **Register
+Company**. Click **About** to show the About page. Point out: nothing here requires an
+account, and no ticket/company data is ever shown pre-login.
 
-## 7. Change status
+## 2. Tenant login (~1 min)
 
-Now log in as **Technician** (repeat Step 4 with `technician`/`Technician123!`, re-Authorize
-with the new token).
+Click **Sign In**. Enter company code `DEMO001`, click through to the username/password
+screen — point out the login screen already shows **ITOnIT Demo Co** by name (`POST
+/auth/resolve-company` resolved it before any credentials were asked for). Log in as
+`employee` / `Employee123!`. Land on the Dashboard — point out it's already populated:
+Employee's own tickets, scoped analytics, nothing fabricated. The sidebar shows **Dashboard**,
+**My Tickets**, **Create Ticket** only for this role.
 
-Expand **`PATCH /tickets/{ticket_id}/status`**, execute with:
-```json
-{"status": "IN_PROGRESS"}
-```
-Point out: this only succeeded because this technician is the one assigned to the ticket, and
-because `ASSIGNED → IN_PROGRESS` is a legal transition. Try setting `"status": "NEW"`
-afterward to show a `409 Conflict` — that transition isn't allowed from `IN_PROGRESS`.
+## 3. Employee creates a new ticket, live (~1–2 min)
 
-## 8. Upload an attachment
+Click **Create Ticket**. Fill in a short realistic example (e.g. title "Mouse stopped
+responding", category **Hardware**, priority **Medium**, location **Head Office**). Submit.
+Land on the new ticket's detail page — point out the auto-generated `ticket_number`
+(`IT-2026-0000NN`, continuing the sequence after the 12 already-seeded tickets) and status
+`NEW`. Employee can only edit this ticket while it stays `NEW`, and can only ever see tickets
+they created.
 
-Still as Technician. Expand **`POST /tickets/{ticket_id}/attachments`**, fill in the ticket
-id. This endpoint takes a real file (multipart upload, not JSON) — click **Choose File** and
-pick any small `.png`/`.jpg`/`.pdf`/`.txt`/`.docx`/`.xlsx` file, then **Execute**.
+## 4. Company Administrator assigns a technician (~1 min)
 
-Point out: the response's `original_filename` matches what you uploaded, but there is no
-`stored_filename`/`file_path` in the response — the internal storage location is never
-exposed. If you have terminal access handy, `ls backend/storage/attachments/` shows the file
-saved under a random, unguessable name.
+Log out, log back in as `admin` / `DemoAdmin123!`. Go to **All Tickets** — point out this
+account sees all 12+ seeded tickets across every status, not just its own, and that the list's
+filters (category/priority/location) are already populated with real company data. Open the
+ticket from Step 3, assign it to `technician`. Status auto-advances `NEW → ASSIGNED`.
 
-## 9. Add a comment
+## 5. Technician handles it: status, comment, attachment (~1–2 min)
 
-Expand **`POST /tickets/{ticket_id}/comments`**, execute with:
-```json
-{"content": "Diagnosed a dead battery - ordering a replacement."}
-```
+Log out, log back in as `technician` / `Technician123!`. Open the ticket just assigned. Change
+status to `IN_PROGRESS`. Add a comment describing a quick diagnosis. Optionally upload a small
+attachment. Point out: the attachment attaches to the *ticket*, never to a specific comment —
+there is no such link in this schema at all (`docs/database-design.md` §12.1 if asked).
 
-## 10. Show the history
+## 6. The main story: inventory reserve → consume, live (~2–3 min)
 
-Expand **`GET /tickets/{ticket_id}/history`**, execute with no body. This returns the full,
-ordered audit trail for the ticket: `ticket_created` → `attachment_added` →
-`assigned_technician` → `status` (twice, once for the auto-advance in Step 6 and once for
-Step 7) → `comment_added` — each with who did it, when, and the old/new value. This is the
-single best endpoint to show off for the "auditing" part of the project.
+Navigate to ticket **`IT-2026-000012`** — *"Docking station not recognized - external monitor
+won't display"* (find it in **Assigned Tickets**, or via the ticket list). This one is already
+further along: `IN_PROGRESS`, with two comments already on it (the technician's diagnosis and
+the employee's reply) and one attachment (`diagnostic-log.txt`) — narrate that the technician
+already diagnosed a faulty docking station and is about to pull a replacement from inventory.
 
-## 11. Show Locations
+Open its **Inventory** section (still logged in as `technician`) and click **Reserve Item**.
+Reserve **Dell WD19 Docking Station** (asset tag `DEMO-DOCK-001`, a SERIALIZED item — point out
+the asset tag and the "one physical unit" model). Then click **Consume**. Point out: the item's
+status flips to `IN_USE`, its holder becomes the ticket's requester (Priya Employee), and this
+also wrote a permanent, append-only `InventoryTransaction` row — visible under **Inventory →
+History** for that item, alongside the `CREATED` row from when it was first added to stock.
 
-Log back in as **Administrator** (`admin` / `Admin123!`, or the `.env` password if the quirk
-above applies).
+Change status to `RESOLVED` (as `technician`), then to `CLOSED` (log in as `admin` for this
+last step, or skip it if short on time).
 
-1. `GET /locations` — show the list (including any deactivated ones — they're still
-   returned, just not selectable for *new* tickets).
-2. `POST /locations` with `{"title": "Branch Office - Ground Floor"}` — `201`.
-3. `PATCH /locations/{id}` with `{"is_active": false}` on that new location — `200`,
-   `is_active` is now `false`.
-4. Try `POST /ticket-new` (or `PATCH /tickets/{id}`) with that now-deactivated location's
-   `location_id` — `400 Bad Request`, `"Location not found or inactive"`. Point out: the
-   ticket from Step 5, which already used a *different*, still-active location, is
-   completely unaffected — deactivation only blocks *new* selection, never breaks existing
-   data. That's the entire reason Locations are deactivated instead of deleted.
+## 7. Ticket history — the audit trail (~1 min)
 
-## 12. Demonstrate role permissions
+Open `IT-2026-000012`'s **History** tab. Walk through the ordered timeline: created → assigned
+→ status changed → two comments → attachment added → inventory reserved → inventory consumed
+→ (status changed again if you did Step 6's last transitions). This is the single best screen
+to show for "auditing" — every meaningful change, who did it, when, old value → new value.
 
-A few quick, high-signal 403s to show the permission system is real, not just documented:
+## 8. Company Administrator: dashboard and admin console (~2 min)
 
-- **Log in as Employee.** Try `POST /locations` — `403 Forbidden`. Only Administrators may
-  manage locations (Managers, who *can* manage Departments/Priorities/Categories, still get
-  403 here too — worth calling out as the one deliberately stricter resource).
-- **Still as Employee.** Try `PATCH /tickets/{ticket_id}/assign` on the ticket from Step 5 —
-  `403 Forbidden`. Only Manager/Administrator may assign technicians.
-- **Still as Employee.** Try `GET /tickets/{ticket_id}` for a ticket created by a *different*
-  employee (create a second one quickly as Manager if needed, on behalf of someone else via
-  `requester_user_id`) — `403 Forbidden`, distinct from `404` for a ticket that doesn't exist
-  at all.
-- **Log in as Manager.** Try `PATCH /users/{some other user's id}` with
-  `{"first_name": "Test"}` — `403 Forbidden`. Managers can view every user but cannot edit
-  anyone else's account; only Administrators can. Then show the same Manager successfully
-  `PATCH /users/{their own id}` with `{"theme": "dark"}` — `200`, since editing your *own*
-  safe fields is always allowed.
+Log back in as `admin`. On the **Dashboard**, point out every number is computed from the real
+seeded data: 12+ tickets across all six statuses, a category/priority breakdown, a monthly
+trend, and — further down — inventory analytics (7 items, one low-stock `Wireless Mouse`, one
+warranty-expiring-soon `Dell WD19 Docking Station`, one in-use serialized laptop). Click a stat
+card to show it deep-links into a filtered ticket list. Open **Company Settings** — it only has
+Timezone/Language under Preferences (no Theme — removed as an unused, never-wired concept;
+worth mentioning if asked). Briefly show **Users** (4 seeded accounts across 3 departments) and
+**Inventory** (all 7 items, with **History** available per item and a company-wide transaction
+feed for Company Administrator).
 
-This closes the loop: authentication (Section 4), the full ticket lifecycle (Sections 5–10),
-the newest feature end-to-end (Section 11), and the permission system enforcing exactly what
-the documentation claims (Section 12).
+## 9. Platform Administrator (~1–2 min)
+
+Navigate to `/platform/login` — a separate login route, no company code field at all. Sign in
+with your own configured `PLATFORM_ADMIN_EMAIL`/`PLATFORM_ADMIN_PASSWORD`. Show the **Platform
+Overview** — it lists **ITOnIT Demo Co** alongside **Default Company**, both active, with a
+combined user count. Open the **Companies** list to show the same. Point out this account has
+no visibility into either company's actual tickets/users/inventory — that boundary is enforced
+structurally (`docs/BACKEND_ARCHITECTURE.md` §5/§14), not just hidden in the UI.
+
+## 10. Electron desktop app (~1 min)
+
+If a packaged build or `npm run dev`/`npm start` in `desktop/` is already running, front that
+window: it opens straight to the company login (not the public site), it's the *same* React
+app, and it talks to the same backend over HTTP — Electron bundles neither FastAPI nor SQL
+Server. Log into `DEMO001` there too if time allows, to show it's the identical dataset. If
+nothing is running, show `desktop/main.js`'s dev/prod origin split and the `app://itonit`
+custom protocol instead, and mention the build is unsigned (SmartScreen warning) with no
+auto-updater — see the root `README.md`'s desktop section.
+
+---
+
+This closes the loop: the public entry point (1), authentication (2), the full ticket
+lifecycle including a live inventory reserve/consume (3–7), company administration (8),
+platform administration (9), and the second distribution channel (10) — the same roles and
+rules enforced identically everywhere they appear, on a dataset built entirely through the
+real application's own services, not hand-inserted rows.

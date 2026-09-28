@@ -12,7 +12,7 @@ from app.schemas.user import AdminPasswordSetRequest, PasswordChangeRequest, Use
 
 # Fields a user may change on their own profile via PATCH /users/{id}.
 # Anything else on UserUpdate is Company-Administrator-only.
-_SELF_EDITABLE_FIELDS = frozenset({"first_name", "last_name", "phone_number", "theme"})
+_SELF_EDITABLE_FIELDS = frozenset({"first_name", "last_name", "phone_number"})
 _MANAGE_ROLES = frozenset({"Company Administrator"})
 
 
@@ -156,7 +156,6 @@ class UserService:
             phone_number=payload.phone_number,
             department_id=payload.department_id,
             role_id=payload.role_id,
-            theme=payload.theme,
             password_hash=hash_password(payload.password),
             is_active=True,
         )
@@ -229,8 +228,6 @@ class UserService:
             user.last_name = payload.last_name
         if "phone_number" in fields_set:
             user.phone_number = payload.phone_number
-        if "theme" in fields_set:
-            user.theme = payload.theme
 
         try:
             self._user_repository.update(user)

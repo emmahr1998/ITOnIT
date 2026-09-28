@@ -34,7 +34,6 @@ def _to_settings_response(company: Company) -> CompanySettingsResponse:
         company_code=company.company_code,
         contact_email=company.contact_email,
         logo_url=company_logo_url(company.id, company.logo_path),
-        theme=company.theme,
         timezone=company.timezone,
         language=company.language,
     )

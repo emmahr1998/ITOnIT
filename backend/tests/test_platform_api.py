@@ -60,7 +60,6 @@ def make_company(id_, name, code, *, is_active=True, created_at=None) -> Company
         id=id_,
         name=name,
         company_code=code,
-        theme="light",
         timezone="UTC",
         language="en",
         contact_email=None,

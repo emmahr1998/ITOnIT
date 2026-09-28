@@ -5,7 +5,6 @@ export interface CompanySettings {
   company_code: string;
   contact_email: string | null;
   logo_url: string | null;
-  theme: string;
   timezone: string;
   language: string;
 }

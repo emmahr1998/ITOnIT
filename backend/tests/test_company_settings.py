@@ -18,10 +18,11 @@ def test_get_settings_returns_current_company(
     body = response.json()
     assert body["name"] == company_a.name
     assert body["company_code"] == company_a.company_code
-    assert body["theme"] == "light"
     assert body["timezone"] == "UTC"
     assert body["language"] == "en"
     assert body["logo_url"] is None
+    # The unused theme concept was removed from the active design.
+    assert "theme" not in body
 
 
 def test_get_settings_requires_authentication(client: TestClient) -> None:

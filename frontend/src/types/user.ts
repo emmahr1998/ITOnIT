@@ -11,7 +11,6 @@ export interface AdminUser {
   phone_number: string | null;
   department: Department | null;
   role: Role;
-  theme: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;

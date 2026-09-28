@@ -463,9 +463,10 @@ def get_all_tickets(
     ticket_service: TicketService = Depends(get_ticket_service),
     current_user: User = Depends(require_roles(*_VIEW_ROLES)),
 ) -> DataResponse[list[TicketResponse]]:
-    """Same visibility rules as GET /tickets (Employee own, Technician
-    assigned, Company Administrator all), plus pagination, sorting, and the
-    full filter/search set.
+    """The ticket list endpoint. Visibility rules: Employee sees their own
+    tickets, Technician the ones assigned to them, Company Administrator all
+    of the company's - plus pagination, sorting, and the full filter/search
+    set.
     """
     tickets = ticket_service.list_tickets(
         current_user,

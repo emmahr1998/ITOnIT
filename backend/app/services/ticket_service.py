@@ -251,9 +251,9 @@ class TicketService:
         skip: int | None = None,
         limit: int | None = None,
     ) -> list[Ticket]:
-        """Backs both GET /tickets (no search/sort/pagination passed) and
-        GET /all-tickets (the full filter set) - the ownership scoping
-        below applies identically to both.
+        """Backs GET /all-tickets (the full filter set). Callers that pass no
+        search/sort/pagination get every matching ticket; the ownership
+        scoping below applies identically either way.
         """
         scope = self.resolve_ownership_scope(current_user)
         if scope.created_by_user_id is not None:
