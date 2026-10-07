@@ -1,0 +1,34 @@
+# Netlify configuration for the ITOnIT public website.
+#
+# This repository is a monorepo (backend/, frontend/, desktop/, docs/) - the
+# site itself is only frontend/, a Vite + React SPA using react-router-dom's
+# BrowserRouter. `base` points Netlify's build at that subdirectory; `publish`
+# is resolved relative to `base` (per Netlify's own convention), i.e. this
+# points at frontend/dist, the output of the existing `npm run build` script
+# (tsc -b && vite build) - the same web production build used locally today.
+#
+# This file does not set VITE_API_BASE_URL - that must be configured as a
+# Netlify site environment variable (Site settings -> Environment variables),
+# never committed here. Leaving it unset keeps the build's current, existing
+# behavior (api/client.ts's API_BASE_URL is undefined, exactly like a local
+# `npm run build` with no .env.production today) until a real, publicly
+# reachable backend URL exists - see docs/ for the deployment notes.
+#
+# Electron (desktop/) is untouched by this file - it has no "build" step
+# here and is never deployed to Netlify; see desktop/package.json for its
+# own, separate build/packaging commands.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+# SPA fallback: BrowserRouter routes (e.g. /login, /dashboard, /platform/login)
+# have no corresponding static file, so a direct load or a page refresh on
+# any of them must still serve index.html and let react-router-dom handle
+# the route client-side - without this, Netlify's static file server would
+# return a real 404 for any path other than "/".
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
