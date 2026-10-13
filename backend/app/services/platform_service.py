@@ -8,7 +8,7 @@ from app.repositories.company import CompanyRepository
 from app.repositories.inventory_item import InventoryItemRepository
 from app.repositories.ticket import TicketRepository
 from app.repositories.user import UserRepository
-from app.schemas.company import CompanyRegisterRequest
+from app.schemas.company import PlatformCompanyRegisterRequest
 from app.services.company_service import CompanyService
 
 # Small, fixed - not a query parameter. GET /platform/overview shows a
@@ -180,19 +180,21 @@ class PlatformService:
         self._db.commit()
         return self.get_company_detail(company_id)
 
-    def create_company(self, payload: CompanyRegisterRequest) -> CompanyDetail:
+    def create_company(self, payload: PlatformCompanyRegisterRequest) -> CompanyDetail:
         """Phase 8.4: a System Administrator provisioning a tenant company
         on a customer's behalf. Delegates the entire job - company-code
         uniqueness check, company + first Company Administrator + all
         starter data, one atomic transaction - to
-        CompanyService.register_company unchanged; this method adds no
-        business logic of its own beyond obtaining the response. Deliberately
-        does not catch CompanyCodeConflictError here: it propagates
-        unchanged up to the route, which maps it exactly the same way
-        POST /companies/register's own route already does - one exception
-        type, one 409 mapping, not a second platform-specific copy of
-        either. Unlike self-registration, the caller (a System
-        Administrator) is never issued tokens for the new tenant admin -
-        see the route's own docstring."""
-        admin = self._company_service.register_company(payload)
+        CompanyService.register_company unchanged, passing payload.company_code
+        through explicitly (this flow's schema requires one, unlike public
+        self-registration's - see PlatformCompanyRegisterRequest's own
+        docstring); this method adds no business logic of its own beyond
+        that and obtaining the response. Deliberately does not catch
+        CompanyCodeConflictError here: it propagates unchanged up to the
+        route, which maps it exactly the same way POST /companies/register's
+        own route already does - one exception type, one 409 mapping, not a
+        second platform-specific copy of either. Unlike self-registration,
+        the caller (a System Administrator) is never issued tokens for the
+        new tenant admin - see the route's own docstring."""
+        admin = self._company_service.register_company(payload, company_code=payload.company_code)
         return self.get_company_detail(admin.company_id)

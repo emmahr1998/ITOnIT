@@ -103,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = await fetchCurrentUser();
       setUser(currentUser);
       setStatus("authenticated");
+      return tokens.company_code;
     } catch (err) {
       tokenStore.clear();
       setStatus("unauthenticated");

@@ -1,3 +1,4 @@
+import secrets
 from collections.abc import Callable
 from pathlib import Path
 
@@ -66,6 +67,34 @@ _STARTER_INVENTORY_CATEGORY_NAMES = [
     "Cable",
     "Other",
 ]
+
+# Auto-generated company_code alphabet: digits and uppercase letters with
+# the pairs most often misread at a glance removed - 0/O and 1/I - so a
+# generated code is easy to read aloud and type back in on a login screen.
+# Not a security property, purely legibility (see validate_company_code_format
+# for the actual accepted-character set, which stays broader for backward
+# compatibility with any pre-existing/caller-supplied code).
+_COMPANY_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+_COMPANY_CODE_PREFIX = "IT-"
+_COMPANY_CODE_RANDOM_LENGTH = 6
+# 32**6 ≈ 1.07 billion possible codes - a handful of pre-check retries is
+# already overwhelming collision resistance for this project; the database's
+# own UNIQUE constraint on company_code (see the add_companies_table
+# migration) remains the final guarantee regardless of this number.
+_COMPANY_CODE_MAX_GENERATION_ATTEMPTS = 5
+
+
+def _generate_company_code_candidate() -> str:
+    """One candidate auto-generated company code, e.g. "IT-7K4M2P" - never
+    derived from the company name (so renaming a company later can never
+    look like it "should" change the code), built from
+    _COMPANY_CODE_ALPHABET via the `secrets` module rather than `random`
+    (idiomatic for generating an identifier that must be unpredictable,
+    even though nothing here is actually security-sensitive)."""
+    suffix = "".join(
+        secrets.choice(_COMPANY_CODE_ALPHABET) for _ in range(_COMPANY_CODE_RANDOM_LENGTH)
+    )
+    return f"{_COMPANY_CODE_PREFIX}{suffix}"
 
 
 class CompanyCodeConflictError(Exception):
@@ -153,7 +182,9 @@ class CompanyService:
             lambda company_id: InventoryCategoryRepository(db, company_id)
         )
 
-    def register_company(self, payload: CompanyRegisterRequest) -> User:
+    def register_company(
+        self, payload: CompanyRegisterRequest, company_code: str | None = None
+    ) -> User:
         """Create a new company, its first Company Administrator, and
         starter company data, all in one transaction - nothing is
         committed until every step succeeds; any failure rolls back the
@@ -165,12 +196,29 @@ class CompanyService:
         creates can conflict with anything already in it. company_code is
         the one value checked, since it must be unique platform-wide.
 
+        company_code is taken as its own parameter, deliberately separate
+        from payload, rather than read off payload.company_code: the
+        public CompanyRegisterRequest has no such field at all (see its
+        own docstring), so public self-registration - the route calls this
+        with company_code left at its default None - can never pass one
+        through, structurally, not just by convention. Only
+        PlatformService.create_company passes an explicit company_code
+        (from PlatformCompanyRegisterRequest), for System Administrator
+        provisioning. When None, a freshly generated one comes from
+        _generate_unique_company_code, which does its own uniqueness
+        pre-check internally; when supplied, it's pre-checked below
+        instead.
+
         Returns the newly created Company Administrator (already
         committed); the route issues tokens for it via
-        AuthService.issue_tokens, immediately signing them in.
+        AuthService.issue_tokens, immediately signing them in, and reads
+        the final company_code back off admin.company for the response.
         """
-        if self._company_repository.get_by_code(payload.company_code) is not None:
-            raise CompanyCodeConflictError
+        if company_code is not None:
+            if self._company_repository.get_by_code(company_code) is not None:
+                raise CompanyCodeConflictError
+        else:
+            company_code = self._generate_unique_company_code()
 
         role = self._role_repository.get_by_name(_COMPANY_ADMIN_ROLE_NAME)
         if role is None:
@@ -181,7 +229,7 @@ class CompanyService:
 
         company = Company(
             name=payload.company_name,
-            company_code=payload.company_code,
+            company_code=company_code,
             timezone="UTC",
             language="en",
             is_active=True,
@@ -309,6 +357,32 @@ class CompanyService:
         if not company.logo_path:
             raise LogoNotFoundError
         return company.logo_path, self._storage_service.load(company.logo_path)
+
+    def _generate_unique_company_code(self) -> str:
+        """Generates a platform-unique company_code for a registration that
+        didn't supply one. Tries a handful of random candidates
+        (_generate_company_code_candidate), pre-checking each against the
+        database via the exact same get_by_code lookup the caller-supplied-
+        code path above uses, and returns the first one that isn't already
+        taken. See _COMPANY_CODE_MAX_GENERATION_ATTEMPTS's own comment for
+        why collision resistance is already overwhelming well before this
+        loop would ever exhaust its attempts - the RuntimeError below is a
+        loud failure for an effectively unreachable case, not a real
+        operational path. The database's own UNIQUE constraint on
+        company_code is still the final guarantee even here: if a genuine
+        race loses against a concurrent registration that grabbed the same
+        candidate between this check and the insert, register_company's own
+        IntegrityError handling below catches it exactly like it already
+        does for a caller-supplied code.
+        """
+        for _ in range(_COMPANY_CODE_MAX_GENERATION_ATTEMPTS):
+            candidate = _generate_company_code_candidate()
+            if self._company_repository.get_by_code(candidate) is None:
+                return candidate
+        raise RuntimeError(
+            "Could not generate a unique company code after "
+            f"{_COMPANY_CODE_MAX_GENERATION_ATTEMPTS} attempts"
+        )
 
     def _seed_defaults(self, company_id: int) -> None:
         priority_repository = self._priority_repository_factory(company_id)

@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.auth import TokenResponse
 from app.schemas.validators import validate_company_code_format, validate_email_format
 
 
@@ -9,14 +10,25 @@ class CompanyRegisterRequest(BaseModel):
 
     Creates a brand new company (tenant) together with its first user, who
     is always the Company Administrator - see
-    CompanyService.register_company. Deliberately has no role_id or
-    company_id field: the caller can never choose either. Employees and
-    Technicians are never created through this endpoint - only through
-    POST /users, by a Company Administrator this endpoint creates.
+    CompanyService.register_company. Deliberately has no role_id,
+    company_id, or company_code field: the caller can never choose any of
+    them. Employees and Technicians are never created through this
+    endpoint - only through POST /users, by a Company Administrator this
+    endpoint creates.
+
+    company_code is never accepted here, by design: the backend always
+    generates a unique one (see CompanyService._generate_unique_company_code)
+    for this endpoint. A request body that includes a "company_code" field
+    anyway is not rejected - Pydantic's default behavior silently ignores
+    unrecognized fields - but since this model has no such field, nothing
+    reads it: register_company() is never called with that value, so it
+    can never influence the resulting company code (see
+    test_company_registration.py's "cannot override" test). System
+    Administrator company provisioning, which does need an explicit code,
+    uses its own PlatformCompanyRegisterRequest below instead of this one.
     """
 
     company_name: str = Field(min_length=1, max_length=200)
-    company_code: str = Field(min_length=3, max_length=20)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     username: str = Field(min_length=1, max_length=50)
@@ -31,15 +43,43 @@ class CompanyRegisterRequest(BaseModel):
             raise ValueError("must not be empty")
         return stripped
 
+    @field_validator("email")
+    @classmethod
+    def _valid_email(cls, value: str) -> str:
+        return validate_email_format(value)
+
+
+class PlatformCompanyRegisterRequest(CompanyRegisterRequest):
+    """POST /platform/companies request body. System-Administrator-only.
+
+    Extends the public registration fields with a required company_code:
+    unlike public self-registration, a System Administrator provisioning a
+    tenant on a customer's behalf chooses the code explicitly (see
+    PlatformService.create_company, which passes it to
+    CompanyService.register_company's own company_code parameter). Kept as
+    its own schema, separate from CompanyRegisterRequest, specifically so
+    the public endpoint's request type can never carry a company_code
+    field at all.
+    """
+
+    company_code: str = Field(min_length=3, max_length=20)
+
     @field_validator("company_code")
     @classmethod
     def _valid_code(cls, value: str) -> str:
         return validate_company_code_format(value)
 
-    @field_validator("email")
-    @classmethod
-    def _valid_email(cls, value: str) -> str:
-        return validate_email_format(value)
+
+class CompanyRegisterResponse(TokenResponse):
+    """POST /companies/register response body: the same access/refresh
+    tokens POST /auth/login returns, plus the company_code the new company
+    actually ended up with (always system-generated for this endpoint -
+    see CompanyRegisterRequest's own docstring) - so the newly created
+    Company Administrator can see and share it immediately after
+    registering.
+    """
+
+    company_code: str
 
 
 def company_logo_url(company_id: int, logo_path: str | None) -> str | None:

@@ -7,22 +7,37 @@ registration flow this replaces is covered separately in
 test_auth.py::test_old_self_registration_endpoint_no_longer_exists.
 """
 
+import re
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.models.company import Company
 from app.models.role import Role
 from app.models.user import User
-from app.schemas.company import CompanyRegisterRequest
+from app.schemas.company import CompanyRegisterRequest, PlatformCompanyRegisterRequest
 from app.services.company_service import CompanyCodeConflictError, CompanyService
-from tests.conftest import COMPANY_A_CODE
+from tests.conftest import COMPANY_A_CODE, FakeCompanyRepository
+
+# Mirrors CompanyService's own generated-code shape: "IT-" + 6 characters
+# from its alphabet (digits/uppercase letters, excluding 0/O/1/I).
+_GENERATED_CODE_PATTERN = re.compile(r"^IT-[2-9A-HJ-NP-Z]{6}$")
 
 
 def _payload(**overrides: object) -> dict:
+    """A valid POST /companies/register body. Deliberately has no
+    company_code key: CompanyRegisterRequest has no such field (see its own
+    docstring) - public registration always gets a system-generated one.
+    Tests that need an explicit, caller-chosen code (System Administrator
+    provisioning) use PlatformCompanyRegisterRequest / POST
+    /platform/companies instead - see the "Explicit company_code" section
+    below.
+    """
     payload = {
         "company_name": "Acme Corp",
-        "company_code": "ACME0001",
         "first_name": "Alice",
         "last_name": "Admin",
         "username": "aliceadmin",
@@ -53,7 +68,7 @@ def test_register_company_succeeds_and_returns_tokens(client: TestClient) -> Non
 
 
 def test_register_company_first_user_is_company_administrator(client: TestClient) -> None:
-    response = _register(client, company_code="ROLECHK1", username="rolechkadmin", email="rolechk@example.com")
+    response = _register(client, username="rolechkadmin", email="rolechk@example.com")
     access = response.json()["access"]
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {access}"})
     assert me.status_code == 200
@@ -61,7 +76,7 @@ def test_register_company_first_user_is_company_administrator(client: TestClient
 
 
 def test_register_company_returned_tokens_work_with_me(client: TestClient) -> None:
-    response = _register(client, company_code="TOKCHK01", username="tokchkadmin", email="tokchk@example.com")
+    response = _register(client, username="tokchkadmin", email="tokchk@example.com")
     access = response.json()["access"]
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {access}"})
     assert me.status_code == 200
@@ -74,15 +89,17 @@ def test_register_company_returned_tokens_work_with_me(client: TestClient) -> No
 
 def test_register_company_user_is_scoped_to_the_new_company_only(client: TestClient) -> None:
     """The new admin must be reachable by logging into the *new* company's
-    own code - and nowhere else - proving it's a real, distinct tenant, not
-    attached to any pre-existing company."""
-    payload = _payload(company_code="SCOPECHK", username="scopechkadmin", email="scopechk@example.com")
-    _register(client, **payload)
+    own (system-generated) code - and nowhere else - proving it's a real,
+    distinct tenant, not attached to any pre-existing company."""
+    payload = _payload(username="scopechkadmin", email="scopechk@example.com")
+    response = _register(client, **payload)
+    assert response.status_code == 201
+    generated_code = response.json()["company_code"]
 
     own_login = client.post(
         "/auth/login",
         json={
-            "company_code": payload["company_code"],
+            "company_code": generated_code,
             "username": payload["username"],
             "password": payload["password"],
         },
@@ -114,7 +131,7 @@ def _register_and_headers(client: TestClient, **overrides: object) -> dict[str, 
 
 def test_register_company_seeds_four_starter_priorities(client: TestClient) -> None:
     headers = _register_and_headers(
-        client, company_code="SEEDPRI1", username="seedpriadmin", email="seedpri@example.com"
+        client, username="seedpriadmin", email="seedpri@example.com"
     )
     response = client.get("/priorities", headers=headers)
     assert response.status_code == 200
@@ -125,7 +142,7 @@ def test_register_company_seeds_four_starter_priorities(client: TestClient) -> N
 
 def test_register_company_seeds_five_starter_categories(client: TestClient) -> None:
     headers = _register_and_headers(
-        client, company_code="SEEDCAT1", username="seedcatadmin", email="seedcat@example.com"
+        client, username="seedcatadmin", email="seedcat@example.com"
     )
     response = client.get("/categories", headers=headers)
     assert response.status_code == 200
@@ -142,7 +159,7 @@ def test_register_company_seeds_five_starter_categories(client: TestClient) -> N
 
 def test_register_company_seeds_head_office_location(client: TestClient) -> None:
     headers = _register_and_headers(
-        client, company_code="SEEDLOC1", username="seedlocadmin", email="seedloc@example.com"
+        client, username="seedlocadmin", email="seedloc@example.com"
     )
     response = client.get("/locations", headers=headers)
     assert response.status_code == 200
@@ -153,7 +170,7 @@ def test_register_company_seeds_head_office_location(client: TestClient) -> None
 
 def test_register_company_seeds_general_department(client: TestClient) -> None:
     headers = _register_and_headers(
-        client, company_code="SEEDDEP1", username="seeddepadmin", email="seeddep@example.com"
+        client, username="seeddepadmin", email="seeddep@example.com"
     )
     response = client.get("/departments", headers=headers)
     assert response.status_code == 200
@@ -173,9 +190,7 @@ def test_register_company_seeds_eleven_starter_inventory_categories(
     test performs the only registration that touches it, so everything in
     it afterward was seeded by this one call.
     """
-    response = _register(
-        client, company_code="SEEDINV1", username="seedinvadmin", email="seedinv@example.com"
-    )
+    response = _register(client, username="seedinvadmin", email="seedinv@example.com")
     assert response.status_code == 201
 
     seeded = inventory_category_repository.get_all()
@@ -198,61 +213,20 @@ def test_register_company_seeds_eleven_starter_inventory_categories(
 
 # ---------------------------------------------------------------------------
 # Uniqueness rules
+#
+# Duplicate/invalid *explicit* company_code rejection is no longer
+# reachable through this public endpoint at all - CompanyRegisterRequest
+# has no company_code field, so there's nothing for a public caller to
+# supply a bad or taken value for (see the "cannot choose a company_code"
+# section below, and PlatformCompanyRegisterRequest's own equivalent tests
+# further down for the one schema that still accepts an explicit code).
+# What remains in scope here is collision handling for *generated* codes,
+# covered directly against CompanyService._generate_unique_company_code.
 # ---------------------------------------------------------------------------
 
 
-def test_register_company_rejects_duplicate_company_code(
-    client: TestClient, company_a: Company
-) -> None:
-    """company_code must be unique platform-wide - company_a's fixture code
-    is already taken before this test even runs a registration."""
-    response = _register(
-        client,
-        company_code=company_a.company_code,
-        username="whoever",
-        email="whoever@example.com",
-    )
-    assert response.status_code == 409
-    assert "company code" in response.json()["detail"].lower()
-
-
-def test_register_company_rejects_duplicate_company_code_case_insensitively(
-    client: TestClient, company_a: Company
-) -> None:
-    response = _register(
-        client,
-        company_code=company_a.company_code.lower(),
-        username="whoever2",
-        email="whoever2@example.com",
-    )
-    assert response.status_code == 409
-
-
-def test_register_company_second_registration_reuses_a_freed_looking_code_still_fails(
-    client: TestClient,
-) -> None:
-    """Registering twice with the exact same code back-to-back must fail
-    the second time - proves the first registration's company_code is
-    actually persisted and checked, not silently dropped."""
-    first = _register(client, company_code="TAKEN001", username="firstadmin", email="first@example.com")
-    assert first.status_code == 201
-
-    second = _register(client, company_code="TAKEN001", username="secondadmin", email="second@example.com")
-    assert second.status_code == 409
-
-
-def test_register_company_rejects_invalid_company_code_format(client: TestClient) -> None:
-    response = _register(client, company_code="not a valid code!", username="badcode", email="badcode@example.com")
-    assert response.status_code == 422
-
-
-def test_register_company_rejects_too_short_company_code(client: TestClient) -> None:
-    response = _register(client, company_code="AB", username="shortcode", email="shortcode@example.com")
-    assert response.status_code == 422
-
-
 def test_register_company_rejects_short_password(client: TestClient) -> None:
-    response = _register(client, company_code="WEAKPW01", username="weakpw", email="weakpw@example.com", password="short")
+    response = _register(client, username="weakpw", email="weakpw@example.com", password="short")
     assert response.status_code == 422
 
 
@@ -261,26 +235,256 @@ def test_register_company_same_username_and_email_allowed_across_two_companies(
 ) -> None:
     """username/email are unique *within* a company, not platform-wide - two
     independently registered companies each choosing "owner"/the same email
-    for their first admin must both succeed."""
-    first = _register(
-        client,
-        company_code="SHARE0001",
-        username="owner",
-        email="owner@shared-example.com",
-    )
+    for their first admin must both succeed, even though each gets its own
+    distinct system-generated company_code."""
+    first = _register(client, username="owner", email="owner@shared-example.com")
     assert first.status_code == 201
 
-    second = _register(
-        client,
-        company_code="SHARE0002",
-        username="owner",
-        email="owner@shared-example.com",
-    )
+    second = _register(client, username="owner", email="owner@shared-example.com")
     assert second.status_code == 201
+    assert first.json()["company_code"] != second.json()["company_code"]
 
 
 # ---------------------------------------------------------------------------
-# Client cannot choose role or company
+# Automatic company code generation - the only behavior POST
+# /companies/register has at all now (see CompanyService.register_company/
+# _generate_unique_company_code): CompanyRegisterRequest has no
+# company_code field to omit or include, so every public registration goes
+# through this path unconditionally.
+# ---------------------------------------------------------------------------
+
+
+def test_register_company_succeeds_without_company_code(client: TestClient) -> None:
+    response = _register(client, username="autocodeadmin", email="autocode@example.com")
+    assert response.status_code == 201, response.text
+
+
+def test_register_company_without_code_generates_one_in_expected_format(
+    client: TestClient,
+) -> None:
+    response = _register(client, username="formatadmin", email="format@example.com")
+    body = response.json()
+    assert "company_code" in body
+    assert _GENERATED_CODE_PATTERN.match(body["company_code"]), body["company_code"]
+
+
+def test_register_company_without_code_never_derives_it_from_the_company_name(
+    client: TestClient,
+) -> None:
+    """The generated code must not leak/encode the company name - e.g. no
+    "ACME"-looking prefix - it's drawn purely from the random alphabet."""
+    response = _register(
+        client,
+        company_name="A Very Distinctive Company Name LLC",
+        username="noderiveadmin",
+        email="noderive@example.com",
+    )
+    code = response.json()["company_code"]
+    assert "AVER" not in code.upper()
+    assert _GENERATED_CODE_PATTERN.match(code)
+
+
+def test_register_company_generated_code_is_returned_and_actually_usable_to_log_in(
+    client: TestClient,
+) -> None:
+    """The code in the response isn't just cosmetic - it's the real,
+    persisted company_code, usable immediately via both resolve-company and
+    login."""
+    response = _register(
+        client,
+        username="usablecodeadmin",
+        email="usablecode@example.com",
+        password="SuperSecret1!",
+    )
+    code = response.json()["company_code"]
+
+    resolved = client.post("/auth/resolve-company", json={"company_code": code})
+    assert resolved.status_code == 200
+    assert resolved.json()["company_name"] == "Acme Corp"
+
+    login = client.post(
+        "/auth/login",
+        json={"company_code": code, "username": "usablecodeadmin", "password": "SuperSecret1!"},
+    )
+    assert login.status_code == 200
+
+
+def test_register_company_without_code_generates_unique_codes_across_calls(
+    client: TestClient,
+) -> None:
+    codes = set()
+    for i in range(5):
+        response = _register(
+            client, username=f"uniqcodeadmin{i}", email=f"uniqcode{i}@example.com"
+        )
+        assert response.status_code == 201, response.text
+        codes.add(response.json()["company_code"])
+    assert len(codes) == 5
+
+
+def test_generate_unique_company_code_retries_past_a_collision(
+    company_repository: FakeCompanyRepository,
+) -> None:
+    """Directly exercises CompanyService._generate_unique_company_code's
+    retry loop: the first candidate collides with an already-taken code,
+    the second doesn't, and the method must return the second one rather
+    than raising or returning the taken one."""
+    taken = Company(
+        id=999,
+        name="Already Registered Co",
+        company_code="IT-AAAAAA",
+        timezone="UTC",
+        language="en",
+        is_active=True,
+    )
+    company_repository.create(taken)
+
+    service = CompanyService(db=None, company_repository=company_repository)  # type: ignore[arg-type]
+    with patch(
+        "app.services.company_service._generate_company_code_candidate",
+        side_effect=["IT-AAAAAA", "IT-BBBBBB"],
+    ) as mock_candidate:
+        code = service._generate_unique_company_code()
+
+    assert code == "IT-BBBBBB"
+    assert mock_candidate.call_count == 2
+
+
+def test_generate_unique_company_code_gives_up_after_max_attempts(
+    company_repository: FakeCompanyRepository,
+) -> None:
+    """If every candidate collides (never happens in practice given the
+    ~1.07 billion-code space, but must still fail loudly rather than
+    silently returning a taken code or looping forever)."""
+    taken = Company(
+        id=999,
+        name="Already Registered Co",
+        company_code="IT-AAAAAA",
+        timezone="UTC",
+        language="en",
+        is_active=True,
+    )
+    company_repository.create(taken)
+
+    service = CompanyService(db=None, company_repository=company_repository)  # type: ignore[arg-type]
+    with patch(
+        "app.services.company_service._generate_company_code_candidate",
+        return_value="IT-AAAAAA",
+    ):
+        with pytest.raises(RuntimeError):
+            service._generate_unique_company_code()
+
+
+# ---------------------------------------------------------------------------
+# Public registration cannot be used to choose a company_code at all.
+# CompanyRegisterRequest has no such field - structurally, not just by
+# convention - so a request body that includes one anyway must have no
+# effect on the result (Pydantic's default extra="ignore" silently drops
+# it before CompanyService.register_company ever runs).
+# ---------------------------------------------------------------------------
+
+
+def test_company_register_request_schema_has_no_company_code_field() -> None:
+    """The strongest guarantee here isn't behavioral, it's structural: this
+    model simply has no company_code field to read, so no code path in
+    register_company()/the /companies/register route could pass one
+    through even by accident."""
+    assert "company_code" not in CompanyRegisterRequest.model_fields
+
+
+def test_register_company_cannot_choose_company_code_via_request_body(
+    client: TestClient,
+) -> None:
+    """Sending company_code="MYCODE" in the request body must not make the
+    new company's code "MYCODE" - the backend still generates a unique
+    "IT-XXXXXX" code exactly as if the field had never been sent at all."""
+    response = client.post(
+        "/companies/register",
+        json={
+            **_payload(username="nocodechoice", email="nocodechoice@example.com"),
+            "company_code": "MYCODE",
+        },
+    )
+    assert response.status_code == 201, response.text
+    code = response.json()["company_code"]
+    assert code != "MYCODE"
+    assert _GENERATED_CODE_PATTERN.match(code), code
+
+    # "MYCODE" was never persisted as any company's code...
+    not_found = client.post("/auth/resolve-company", json={"company_code": "MYCODE"})
+    assert not_found.status_code == 404
+    cannot_login = client.post(
+        "/auth/login",
+        json={"company_code": "MYCODE", "username": "nocodechoice", "password": "SuperSecret1!"},
+    )
+    assert cannot_login.status_code == 401
+
+    # ...only the real, system-generated one works.
+    resolved = client.post("/auth/resolve-company", json={"company_code": code})
+    assert resolved.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Explicit company_code: System Administrator provisioning only. Unlike
+# public self-registration, POST /platform/companies uses its own
+# PlatformCompanyRegisterRequest schema (extends CompanyRegisterRequest
+# with a required company_code), passed through explicitly to
+# CompanyService.register_company's own company_code parameter - see
+# PlatformService.create_company.
+# ---------------------------------------------------------------------------
+
+
+def test_platform_company_register_request_requires_company_code() -> None:
+    with pytest.raises(ValidationError):
+        PlatformCompanyRegisterRequest(
+            company_name="No Code Co",
+            first_name="Pat",
+            last_name="Admin",
+            username="nocodeadmin",
+            email="nocode@example.com",
+            password="SuperSecret1!",
+        )
+
+
+def test_platform_company_register_request_validates_company_code_format() -> None:
+    with pytest.raises(ValidationError):
+        PlatformCompanyRegisterRequest(
+            company_name="Bad Code Co",
+            company_code="not a valid code!",
+            first_name="Pat",
+            last_name="Admin",
+            username="badcodeadmin",
+            email="badcode@example.com",
+            password="SuperSecret1!",
+        )
+
+
+def test_platform_provisioning_with_explicit_code_does_not_generate_one(
+    client: TestClient, auth_headers, active_system_administrator_user
+) -> None:
+    """System Administrator provisioning (POST /platform/companies) still
+    lets the caller choose company_code explicitly - the one route whose
+    request schema still has that field at all."""
+    response = client.post(
+        "/platform/companies",
+        json={
+            "company_name": "Provisioned By Admin",
+            "company_code": "EXPLICIT1",
+            "first_name": "Pat",
+            "last_name": "Admin",
+            "username": "explicitadmin",
+            "email": "explicit@example.com",
+            "password": "SuperSecret1!",
+        },
+        headers=auth_headers(active_system_administrator_user),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["company_code"] == "EXPLICIT1"
+
+
+# ---------------------------------------------------------------------------
+# Client cannot choose role or company (company_code is covered in its own
+# dedicated section above).
 # ---------------------------------------------------------------------------
 
 
@@ -291,7 +495,7 @@ def test_register_company_ignores_client_supplied_role_id(client: TestClient) ->
     Administrator regardless of what was sent."""
     response = client.post(
         "/companies/register",
-        json={**_payload(company_code="NOROLE01", username="noroleadmin", email="norole@example.com"), "role_id": 999},
+        json={**_payload(username="noroleadmin", email="norole@example.com"), "role_id": 999},
     )
     assert response.status_code == 201
     access = response.json()["access"]
@@ -304,11 +508,12 @@ def test_register_company_ignores_client_supplied_company_id(
 ) -> None:
     """CompanyRegisterRequest has no company_id field - trying to attach the
     new user to an existing company (company_a) by id has no effect. The
-    new user is only reachable through the brand new company_code, never
-    through company_a's."""
-    payload = _payload(company_code="NOCOID01", username="nocoidadmin", email="nocoid@example.com")
+    new user is only reachable through the brand new, system-generated
+    company_code, never through company_a's."""
+    payload = _payload(username="nocoidadmin", email="nocoid@example.com")
     response = client.post("/companies/register", json={**payload, "company_id": company_a.id})
     assert response.status_code == 201
+    generated_code = response.json()["company_code"]
 
     wrong_company_login = client.post(
         "/auth/login",
@@ -323,7 +528,7 @@ def test_register_company_ignores_client_supplied_company_id(
     own_login = client.post(
         "/auth/login",
         json={
-            "company_code": payload["company_code"],
+            "company_code": generated_code,
             "username": payload["username"],
             "password": payload["password"],
         },
@@ -341,12 +546,8 @@ def test_two_registered_companies_cannot_see_each_others_seeded_data(client: Tes
     priority titles, same "General" department, ...), so a content-only
     check could pass even with real cross-tenant leakage - counts are what
     actually prove isolation here."""
-    headers_x = _register_and_headers(
-        client, company_code="ISOX0001", username="isoxadmin", email="isox@example.com"
-    )
-    headers_y = _register_and_headers(
-        client, company_code="ISOY0001", username="isoyadmin", email="isoy@example.com"
-    )
+    headers_x = _register_and_headers(client, username="isoxadmin", email="isox@example.com")
+    headers_y = _register_and_headers(client, username="isoyadmin", email="isoy@example.com")
 
     priorities_x = client.get("/priorities", headers=headers_x).json()["data"]
     priorities_y = client.get("/priorities", headers=headers_y).json()["data"]
@@ -466,10 +667,10 @@ def test_register_company_rolls_back_company_and_user_if_seeding_fails(
         department_repository_factory=lambda company_id: None,
     )
 
-    payload = CompanyRegisterRequest(**_payload(company_code="ROLLBACK1", username="rollbackadmin", email="rollback@example.com"))
+    payload = CompanyRegisterRequest(**_payload(username="rollbackadmin", email="rollback@example.com"))
 
     with pytest.raises(CompanyCodeConflictError):
-        service.register_company(payload)
+        service.register_company(payload, company_code="ROLLBACK1")
 
     assert session.rolled_back is True
     assert session.committed is False
@@ -494,9 +695,9 @@ def test_register_company_missing_role_raises_before_creating_anything(
         company_repository=company_repository,
         role_repository=_EmptyRoleRepository(),
     )
-    payload = CompanyRegisterRequest(**_payload(company_code="NOROLESE", username="norolesee", email="norolesee@example.com"))
+    payload = CompanyRegisterRequest(**_payload(username="norolesee", email="norolesee@example.com"))
 
     with pytest.raises(RuntimeError):
-        service.register_company(payload)
+        service.register_company(payload, company_code="NOROLESE")
 
     assert company_repository.get_by_code("NOROLESE") is None

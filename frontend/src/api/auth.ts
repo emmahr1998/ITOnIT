@@ -2,6 +2,7 @@ import { apiClient } from "./client";
 import type {
   CompanyCodeRequest,
   CompanyRegisterRequest,
+  CompanyRegisterResponse,
   CompanyResolveResponse,
   CurrentUser,
   LoginRequest,
@@ -25,8 +26,8 @@ export async function loginRequest(payload: LoginRequest): Promise<TokenResponse
 
 export async function registerCompanyRequest(
   payload: CompanyRegisterRequest,
-): Promise<TokenResponse> {
-  const { data } = await apiClient.post<TokenResponse>("/companies/register", payload);
+): Promise<CompanyRegisterResponse> {
+  const { data } = await apiClient.post<CompanyRegisterResponse>("/companies/register", payload);
   return data;
 }
 

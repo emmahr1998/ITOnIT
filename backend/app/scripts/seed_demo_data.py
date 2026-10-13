@@ -164,13 +164,13 @@ def _get_or_register_company(db) -> tuple[object, bool]:
         admin = company_service.register_company(
             CompanyRegisterRequest(
                 company_name=DEMO_COMPANY_NAME,
-                company_code=DEMO_COMPANY_CODE,
                 first_name=_ADMIN["first_name"],
                 last_name=_ADMIN["last_name"],
                 username=_ADMIN["username"],
                 email=_ADMIN["email"],
                 password=_ADMIN["password"],
-            )
+            ),
+            company_code=DEMO_COMPANY_CODE,
         )
     except CompanyCodeConflictError:
         # Lost a race with a concurrent run - fetch what the other run created.

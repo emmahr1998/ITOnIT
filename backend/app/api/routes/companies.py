@@ -6,9 +6,9 @@ from starlette.responses import Response
 from app.dependencies import get_auth_service, get_company_service, get_current_company_id, require_roles
 from app.models.company import Company
 from app.models.user import User
-from app.schemas.auth import TokenResponse
 from app.schemas.company import (
     CompanyRegisterRequest,
+    CompanyRegisterResponse,
     CompanySettingsResponse,
     CompanyUpdateRequest,
     company_logo_url,
@@ -39,16 +39,22 @@ def _to_settings_response(company: Company) -> CompanySettingsResponse:
     )
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", response_model=CompanyRegisterResponse, status_code=status.HTTP_201_CREATED
+)
 def register_company(
     payload: CompanyRegisterRequest,
     company_service: CompanyService = Depends(get_company_service),
     auth_service: AuthService = Depends(get_auth_service),
-) -> TokenResponse:
+) -> CompanyRegisterResponse:
     """Public. Register a new company: creates the company, its first
     Company Administrator, and starter company data in one transaction,
     then signs the new Company Administrator in immediately - see
-    CompanyService.register_company.
+    CompanyService.register_company. The request body has no company_code
+    field (see CompanyRegisterRequest's own docstring) and this call never
+    passes one through, so the backend always generates a unique one
+    (format "IT-XXXXXX"); the response includes it, so the new Company
+    Administrator can see/share it immediately.
 
     Replaces the old POST /auth/register self-registration flow, which
     always created a bare, company-less Employee account.
@@ -59,7 +65,13 @@ def register_company(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "A company with this company code already exists"
         ) from exc
-    return auth_service.issue_tokens(admin)
+    tokens = auth_service.issue_tokens(admin)
+    return CompanyRegisterResponse(
+        access=tokens.access,
+        refresh=tokens.refresh,
+        token_type=tokens.token_type,
+        company_code=admin.company.company_code,
+    )
 
 
 @router.get("/me", response_model=CompanySettingsResponse)

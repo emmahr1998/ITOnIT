@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { CompanyRegisterRequest, TokenResponse } from "../types/auth";
+import type { PlatformCompanyRegisterRequest, TokenResponse } from "../types/auth";
 import type { DataResponse } from "../types/response";
 import type {
   PlatformCompanyDetail,
@@ -54,15 +54,17 @@ export async function deactivatePlatformCompany(companyId: number): Promise<Plat
 }
 
 /**
- * POST /platform/companies. Reuses the exact same CompanyRegisterRequest
- * shape as self-service registration - sends only the seven fields that
- * type defines, never company_id/role_id. Deliberately not routed through
+ * POST /platform/companies. Uses its own PlatformCompanyRegisterRequest
+ * type - the public CompanyRegisterRequest's fields plus a required
+ * company_code, since a System Administrator provisioning a company
+ * chooses it explicitly (unlike public self-registration, which never
+ * accepts one at all). Deliberately not routed through
  * AuthContext.registerCompany: the response has no tokens at all (a System
  * Administrator provisioning a company is never signed in as its new
  * admin), so this is a plain data call like every other function here.
  */
 export async function createPlatformCompany(
-  payload: CompanyRegisterRequest,
+  payload: PlatformCompanyRegisterRequest,
 ): Promise<PlatformCompanyDetail> {
   const { data } = await apiClient.post<DataResponse<PlatformCompanyDetail>>(
     "/platform/companies",

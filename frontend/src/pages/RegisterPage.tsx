@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { CheckCircle2 } from "lucide-react";
+import { Check, CheckCircle2, Copy } from "lucide-react";
 import { ErrorMessage } from "../components/common/ErrorMessage";
 import { Mascot } from "../components/common/Mascot";
 import { useAuth } from "../auth/useAuth";
@@ -13,18 +13,11 @@ const FEATURES = [
   "A full history on every request",
 ];
 
-// Mirrors the backend's validate_company_code_format
-// (backend/app/schemas/validators.py) - kept in sync deliberately, so an
-// obviously-invalid code is caught here instead of round-tripping to the
-// server first.
-const COMPANY_CODE_PATTERN = /^[A-Za-z0-9_-]{3,20}$/;
-
 export function RegisterPage() {
   const { registerCompany, status, error } = useAuth();
   const navigate = useNavigate();
 
   const [companyName, setCompanyName] = useState("");
-  const [companyCode, setCompanyCode] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [username, setUsername] = useState("");
@@ -32,26 +25,22 @@ export function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [companyCodeError, setCompanyCodeError] = useState<string | null>(null);
   const [confirmPasswordError, setConfirmPasswordError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Set once registration succeeds - replaces the form with a confirmation
+  // panel showing the backend-generated company code, instead of
+  // immediately navigating away before the admin has a chance to see it.
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  if (status === "authenticated") {
+  if (status === "authenticated" && !generatedCode) {
     return <Navigate to="/dashboard" replace />;
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setCompanyCodeError(null);
     setConfirmPasswordError(null);
 
-    const trimmedCode = companyCode.trim();
-    if (!COMPANY_CODE_PATTERN.test(trimmedCode)) {
-      setCompanyCodeError(
-        "Company code must be 3-20 characters: letters, numbers, hyphens, or underscores only.",
-      );
-      return;
-    }
     if (password !== confirmPassword) {
       setConfirmPasswordError("Passwords do not match.");
       return;
@@ -59,20 +48,33 @@ export function RegisterPage() {
 
     setSubmitting(true);
     try {
-      await registerCompany({
+      const companyCode = await registerCompany({
         company_name: companyName.trim(),
-        company_code: trimmedCode,
         first_name: firstName.trim(),
         last_name: lastName.trim(),
         username: username.trim(),
         email: email.trim(),
         password,
       });
-      navigate("/dashboard", { replace: true });
+      setGeneratedCode(companyCode);
     } catch {
       // Failure message is already surfaced via the auth context's `error`.
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleCopyCode() {
+    if (!generatedCode) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(generatedCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can be denied/unavailable - the code is still
+      // shown on screen and selectable by hand, so this is a soft failure.
     }
   }
 
@@ -99,12 +101,46 @@ export function RegisterPage() {
       </div>
 
       <div className={loginStyles.formPanel}>
+        {generatedCode ? (
+          <div className={`${loginStyles.card} ${styles.card}`}>
+            <div className={loginStyles.cardHeader}>
+              <h2 className={loginStyles.title}>
+                <CheckCircle2 size={22} strokeWidth={2} className={styles.successIcon} />
+                Company created
+              </h2>
+              <p className={loginStyles.subtitle}>
+                Your company code is <strong>{generatedCode}</strong>. Employees will use this
+                code to sign in to your company, so make a note of it now.
+              </p>
+            </div>
+
+            <div className={styles.codePanel}>
+              <span className={styles.codeValue}>{generatedCode}</span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleCopyCode}
+              >
+                {copied ? <Check size={14} /> : <Copy size={14} />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className={`btn btn-primary ${loginStyles.submitButton}`}
+              onClick={() => navigate("/dashboard", { replace: true })}
+            >
+              Continue to Dashboard
+            </button>
+          </div>
+        ) : (
         <form className={`${loginStyles.card} ${styles.card}`} onSubmit={handleSubmit}>
           <div className={loginStyles.cardHeader}>
             <h2 className={loginStyles.title}>Register Your Company</h2>
             <p className={loginStyles.subtitle}>
               Set up your company&rsquo;s workspace and sign in as its first Company
-              Administrator.
+              Administrator. We&rsquo;ll generate a unique company code for you automatically.
             </p>
           </div>
 
@@ -124,26 +160,6 @@ export function RegisterPage() {
                 autoFocus
                 required
               />
-            </label>
-
-            <label className="field">
-              <span className="fieldLabel">
-                Company Code<span className="requiredMark">*</span>
-              </span>
-              <input
-                type="text"
-                className="input"
-                value={companyCode}
-                onChange={(event) => setCompanyCode(event.target.value)}
-                minLength={3}
-                maxLength={20}
-                required
-              />
-              <span className={styles.hint}>
-                A short, unique code your team will type in to sign in (e.g.{" "}
-                <strong>ACME01</strong>). Letters, numbers, hyphens, and underscores only.
-              </span>
-              {companyCodeError && <ErrorMessage message={companyCodeError} />}
             </label>
           </div>
 
@@ -254,6 +270,7 @@ export function RegisterPage() {
             Already have an account? <Link to="/login">Sign in</Link>
           </p>
         </form>
+        )}
       </div>
     </div>
   );
