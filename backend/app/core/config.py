@@ -65,6 +65,24 @@ class Settings(BaseSettings):
     # origins) to add/restrict origins per environment - see .env.example.
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # Optional: used only by app.services.email_service.SmtpEmailService, to
+    # send the public-registration "welcome, here's your company code"
+    # email (Gmail-compatible SMTP via smtplib - no external email
+    # dependency, see that module's own docstring). Same optionality
+    # convention as INITIAL_ADMIN_*/PLATFORM_ADMIN_* above: sending is
+    # skipped entirely, never a crash, when these aren't all set - see
+    # SmtpEmailService.is_configured. SMTP_HOST/SMTP_PORT/SMTP_FROM_NAME
+    # default to Gmail's own settings since that's this project's
+    # recommended $0, no-card provider; SMTP_USERNAME/SMTP_PASSWORD/
+    # SMTP_FROM_EMAIL have no safe default and must come from the
+    # environment - never hard-code real credentials here.
+    SMTP_HOST: Optional[str] = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM_EMAIL: Optional[str] = None
+    SMTP_FROM_NAME: Optional[str] = "ITOnIT"
+
 
 @lru_cache
 def get_settings() -> Settings:

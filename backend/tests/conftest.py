@@ -1270,6 +1270,30 @@ class FakeStorageService:
         self.files.pop(stored_filename, None)
 
 
+class FakeEmailService:
+    """In-memory stand-in for SmtpEmailService - never opens a socket, just
+    records calls. Same rationale as FakeStorageService: the test suite
+    must never reach real SMTP code, not merely avoid calling it by
+    convention - this fake is the only EmailService implementation any
+    client fixture ever wires into CompanyService (see the client fixture
+    below), so a real smtplib.SMTP(...) connection is structurally
+    unreachable from any test.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str, str]] = []
+        self.is_configured = True
+        self.fail_next_send = False
+
+    def send_company_registered_email(
+        self, to_email: str, company_name: str, company_code: str
+    ) -> None:
+        if self.fail_next_send:
+            self.fail_next_send = False
+            raise RuntimeError("simulated SMTP failure")
+        self.sent.append((to_email, company_name, company_code))
+
+
 class FakeSession:
     """No-op stand-in for the transaction-boundary calls the services make.
 
@@ -2130,6 +2154,11 @@ def storage_service() -> FakeStorageService:
 
 
 @pytest.fixture
+def email_service() -> FakeEmailService:
+    return FakeEmailService()
+
+
+@pytest.fixture
 def attachment_repository(
     employee_attachment: Attachment,
     company_b_attachment: Attachment,
@@ -2171,6 +2200,7 @@ def client(
     history_repository: FakeHistoryRepository,
     attachment_repository: FakeAttachmentRepository,
     storage_service: FakeStorageService,
+    email_service: FakeEmailService,
 ) -> Iterator[TestClient]:
     # The dependency-override functions below each take their own
     # `company_id: int = Depends(get_current_company_id)`, resolved fresh
@@ -2307,6 +2337,7 @@ def client(
             company_repository=company_repository,
             role_repository=role_repository,
             storage_service=storage_service,
+            email_service=email_service,
             user_repository_factory=lambda company_id: user_repository.scoped(company_id),
             priority_repository_factory=_priority_repo,
             category_repository_factory=_category_repo,
