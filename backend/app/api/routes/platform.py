@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.dependencies import get_auth_service, get_platform_service, require_roles
 from app.models.user import User
 from app.schemas.auth import TokenResponse
-from app.schemas.company import CompanyRegisterRequest
+from app.schemas.company import PlatformCompanyRegisterRequest
 from app.schemas.platform import (
     CompanyDetailResponse,
     CompanyListResponse,
@@ -58,17 +58,20 @@ def platform_login(
     status_code=status.HTTP_201_CREATED,
 )
 def create_platform_company(
-    payload: CompanyRegisterRequest,
+    payload: PlatformCompanyRegisterRequest,
     platform_service: PlatformService = Depends(get_platform_service),
     _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
 ) -> DataResponse[CompanyDetailResponse]:
-    """System-Administrator-only (Milestone 8, Phase 8.4). Reuses the exact
-    same request schema and the exact same CompanyService.register_company
-    call self-service POST /companies/register uses - no parallel creation
-    logic exists here, see PlatformService.create_company's own docstring.
-    Unlike self-registration, no tokens are returned: a System
-    Administrator provisioning a company on a customer's behalf is never
-    signed in as that company's new admin."""
+    """System-Administrator-only (Milestone 8, Phase 8.4). Uses its own
+    request schema (PlatformCompanyRegisterRequest) that, unlike public
+    self-registration's CompanyRegisterRequest, requires an explicit
+    company_code - and the exact same CompanyService.register_company call
+    self-service POST /companies/register uses, just passing that code
+    through - no parallel creation logic exists here, see
+    PlatformService.create_company's own docstring. Unlike
+    self-registration, no tokens are returned: a System Administrator
+    provisioning a company on a customer's behalf is never signed in as
+    that company's new admin."""
     try:
         detail = platform_service.create_company(payload)
     except CompanyCodeConflictError as exc:
