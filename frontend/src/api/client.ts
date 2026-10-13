@@ -12,6 +12,23 @@ export const apiClient = axios.create({
   baseURL: API_BASE_URL,
 });
 
+/**
+ * Turns a backend-relative asset path (e.g. a company logo's `/companies/
+ * {id}/logo`) into a URL the browser can actually fetch. The one place this
+ * concatenation happens - never repeat `${API_BASE_URL}${path}` elsewhere.
+ * Already-absolute URLs pass through unchanged, which keeps this safe to
+ * call on a field that might someday point somewhere other than this API.
+ */
+export function resolveAssetUrl(path: string | null | undefined): string | undefined {
+  if (!path) {
+    return undefined;
+  }
+  if (/^https?:\/\//.test(path)) {
+    return path;
+  }
+  return `${API_BASE_URL}${path}`;
+}
+
 /** Attaches the current access token to every outgoing request, if present. */
 apiClient.interceptors.request.use((config) => {
   const token = tokenStore.getAccessToken();

@@ -1,0 +1,49 @@
+/*
+ * RolesPage reuses LandingPage.module.css for hero/section/card styling;
+ * these are its own additions - a 4-card grid (landing's own .roleGrid is
+ * 3 columns, for its 3 tenant-facing roles) and a callout explaining the
+ * Company Administrator vs. System Administrator distinction.
+ */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-5);
+}
+
+@media (max-width: 800px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.platformCard {
+  border-color: var(--color-border-strong);
+}
+
+.compare {
+  max-width: 56rem;
+  margin: var(--space-8) auto 0;
+  padding: var(--space-6);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.compareTitle {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin-bottom: var(--space-3);
+}
+
+.compareText {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}
+
+.compareText + .compareText {
+  margin-top: var(--space-3);
+}

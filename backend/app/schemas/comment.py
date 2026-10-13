@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.ticket import TicketUserSummary
+from app.schemas.types import UTCDatetime
 
 
 class CommentContentBase(BaseModel):
@@ -40,5 +39,5 @@ class CommentResponse(BaseModel):
     ticket_id: int
     content: str
     author: TicketUserSummary
-    created_at: datetime
-    updated_at: datetime | None
+    created_at: UTCDatetime
+    updated_at: UTCDatetime | None

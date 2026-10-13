@@ -16,7 +16,7 @@ def test_get_current_active_user_rejects_inactive_user(inactive_user: User) -> N
 
 
 def test_require_roles_allows_permitted_role(active_admin_user: User) -> None:
-    dependency = require_roles("Administrator")
+    dependency = require_roles("Company Administrator")
     assert dependency(current_user=active_admin_user) is active_admin_user
 
 

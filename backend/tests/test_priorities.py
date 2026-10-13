@@ -227,7 +227,9 @@ def test_create_priority_translates_integrity_error_to_conflict() -> None:
         def create(self, obj: Priority) -> Priority:
             raise IntegrityError("insert", {}, Exception("unique constraint"))
 
-    service = PriorityService(db=FakeSession(), priority_repository=RaisingRepository())
+    service = PriorityService(
+        db=FakeSession(), company_id=1, priority_repository=RaisingRepository()
+    )
 
     with pytest.raises(PriorityTitleConflictError):
         service.create_priority(PriorityCreate(title="Urgent"))

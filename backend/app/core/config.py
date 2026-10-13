@@ -38,15 +38,60 @@ class Settings(BaseSettings):
     INITIAL_ADMIN_FIRST_NAME: Optional[str] = None
     INITIAL_ADMIN_LAST_NAME: Optional[str] = None
 
+    # Optional: used only by app.scripts.seed_initial_data, to bootstrap the
+    # one platform-level System Administrator account (company_id=NULL,
+    # Milestone 8 Phase 8.3). Creation is skipped entirely when email/
+    # password are unset - same convention as INITIAL_ADMIN_* above, kept
+    # as a fully separate pair of settings since this is a platform-wide
+    # account, not a per-company one.
+    PLATFORM_ADMIN_EMAIL: Optional[str] = None
+    PLATFORM_ADMIN_PASSWORD: Optional[str] = None
+    PLATFORM_ADMIN_FIRST_NAME: Optional[str] = None
+    PLATFORM_ADMIN_LAST_NAME: Optional[str] = None
+
     # Attachments: files live on disk under this path, never in SQL Server.
     ATTACHMENT_STORAGE_PATH: str = "storage/attachments"
     MAX_ATTACHMENT_SIZE_BYTES: int = 10 * 1024 * 1024
+
+    # Company logos: same disk-storage pattern as attachments, kept in a
+    # separate directory (a logo isn't ticket-owned data) and capped much
+    # smaller, since it's a small brand image, not a general file upload.
+    LOGO_STORAGE_PATH: str = "storage/logos"
+    MAX_LOGO_SIZE_BYTES: int = 2 * 1024 * 1024
 
     # CORS: browser origins allowed to call this API. Defaults cover the
     # Vite React dev server (5173) and the common CRA/alternate dev port
     # (3000). Override via the CORS_ORIGINS env var (a JSON array of
     # origins) to add/restrict origins per environment - see .env.example.
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+
+    # Optional: used only by app.services.email_service.SmtpEmailService, to
+    # send the public-registration "welcome, here's your company code"
+    # email (Gmail-compatible SMTP via smtplib - no external email
+    # dependency, see that module's own docstring). Same optionality
+    # convention as INITIAL_ADMIN_*/PLATFORM_ADMIN_* above: sending is
+    # skipped entirely, never a crash, when these aren't all set - see
+    # SmtpEmailService.is_configured. SMTP_HOST/SMTP_PORT/SMTP_FROM_NAME
+    # default to Gmail's own settings since that's this project's
+    # recommended $0, no-card provider; SMTP_USERNAME/SMTP_PASSWORD/
+    # SMTP_FROM_EMAIL have no safe default and must come from the
+    # environment - never hard-code real credentials here.
+    SMTP_HOST: Optional[str] = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM_EMAIL: Optional[str] = None
+    SMTP_FROM_NAME: Optional[str] = "ITOnIT"
+
+    # Optional: destination address for the public Help Center contact
+    # form (POST /support/contact - see app/services/support_service.py).
+    # Reuses the SMTP_* settings above, never a second email account/
+    # implementation. Deliberately no default - never hard-code a real
+    # destination address in source; set it in your local .env only. If
+    # unset (or SMTP itself isn't configured), the contact form returns a
+    # safe error to the caller rather than silently failing - see
+    # SupportService.send_contact_message.
+    SUPPORT_EMAIL: Optional[str] = None
 
 
 @lru_cache

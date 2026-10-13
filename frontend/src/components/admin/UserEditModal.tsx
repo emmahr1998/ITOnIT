@@ -4,9 +4,8 @@ import { ErrorMessage } from "../common/ErrorMessage";
 import { updateUser } from "../../api/users";
 import { getApiErrorMessage } from "../../api/client";
 import { ROLE_ID_BY_NAME, ROLE_OPTIONS } from "../../types/user";
-import type { AdminUser } from "../../types/user";
+import type { AdminUser, AssignableRole } from "../../types/user";
 import type { Department } from "../../types/department";
-import type { Role } from "../../types/auth";
 import styles from "./UserEditModal.module.css";
 
 interface UserEditModalProps {
@@ -23,7 +22,10 @@ export function UserEditModal({ user, departments, onClose, onSaved }: UserEditM
   const [email, setEmail] = useState(user.email);
   const [phoneNumber, setPhoneNumber] = useState(user.phone_number ?? "");
   const [departmentId, setDepartmentId] = useState(user.department?.id.toString() ?? "");
-  const [role, setRole] = useState<Role>(user.role);
+  // This modal only ever edits a company-scoped user (GET /users is scoped
+  // to the caller's company), so `user.role` is never the platform-only
+  // "System Administrator" in practice, even though `Role` allows it.
+  const [role, setRole] = useState<AssignableRole>(user.role as AssignableRole);
   const [isActive, setIsActive] = useState(user.is_active);
 
   const [saving, setSaving] = useState(false);
@@ -139,7 +141,7 @@ export function UserEditModal({ user, departments, onClose, onSaved }: UserEditM
             <span className="fieldLabel">Role</span>
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value as Role)}
+              onChange={(e) => setRole(e.target.value as AssignableRole)}
               className="select"
             >
               {ROLE_OPTIONS.map((r) => (

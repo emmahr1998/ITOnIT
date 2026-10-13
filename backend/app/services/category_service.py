@@ -23,14 +23,24 @@ class CategoryService:
 
     Also owns the transaction boundary for writes - repositories only
     flush (see BaseRepository), so commit()/rollback() happen here.
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input -
+    every category this service reads or writes is confined to it.
     """
 
     def __init__(
-        self, db: Session, category_repository: CategoryRepository | None = None
+        self,
+        db: Session,
+        company_id: int,
+        category_repository: CategoryRepository | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._category_repository = (
-            category_repository if category_repository is not None else CategoryRepository(db)
+            category_repository
+            if category_repository is not None
+            else CategoryRepository(db, company_id)
         )
 
     def list_categories(self) -> list[Category]:
@@ -46,7 +56,9 @@ class CategoryService:
         if self._category_repository.get_by_name(payload.name) is not None:
             raise CategoryNameConflictError
 
-        category = Category(name=payload.name, description=payload.description)
+        category = Category(
+            company_id=self._company_id, name=payload.name, description=payload.description
+        )
         try:
             self._category_repository.create(category)
             self._db.commit()

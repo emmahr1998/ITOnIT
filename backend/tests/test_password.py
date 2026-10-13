@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 from fastapi.testclient import TestClient
 
+from app.models.company import Company
 from app.models.user import User
 
 
@@ -9,6 +10,7 @@ def test_change_own_password_succeeds(
     client: TestClient,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
+    company_a: Company,
 ) -> None:
     response = client.patch(
         "/users/me/password",
@@ -20,14 +22,22 @@ def test_change_own_password_succeeds(
     # Old password no longer works.
     old_login = client.post(
         "/auth/login",
-        json={"username": active_employee_user.username, "password": "EmployeePass1!"},
+        json={
+            "company_code": company_a.company_code,
+            "username": active_employee_user.username,
+            "password": "EmployeePass1!",
+        },
     )
     assert old_login.status_code == 401
 
     # New password works.
     new_login = client.post(
         "/auth/login",
-        json={"username": active_employee_user.username, "password": "BrandNewPass1!"},
+        json={
+            "company_code": company_a.company_code,
+            "username": active_employee_user.username,
+            "password": "BrandNewPass1!",
+        },
     )
     assert new_login.status_code == 200
 
@@ -36,6 +46,7 @@ def test_change_own_password_rejects_wrong_current_password(
     client: TestClient,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
+    company_a: Company,
 ) -> None:
     response = client.patch(
         "/users/me/password",
@@ -47,7 +58,11 @@ def test_change_own_password_rejects_wrong_current_password(
     # Original password still works.
     login = client.post(
         "/auth/login",
-        json={"username": active_employee_user.username, "password": "EmployeePass1!"},
+        json={
+            "company_code": company_a.company_code,
+            "username": active_employee_user.username,
+            "password": "EmployeePass1!",
+        },
     )
     assert login.status_code == 200
 
@@ -65,6 +80,7 @@ def test_admin_set_password_succeeds_without_current_password(
     active_admin_user: User,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
+    company_a: Company,
 ) -> None:
     response = client.patch(
         f"/users/{active_employee_user.id}/password",
@@ -75,21 +91,44 @@ def test_admin_set_password_succeeds_without_current_password(
 
     new_login = client.post(
         "/auth/login",
-        json={"username": active_employee_user.username, "password": "AdminSetThis1!"},
+        json={
+            "company_code": company_a.company_code,
+            "username": active_employee_user.username,
+            "password": "AdminSetThis1!",
+        },
     )
     assert new_login.status_code == 200
 
 
-def test_admin_set_password_forbidden_for_non_admin(
+def test_admin_set_password_succeeds_for_a_second_company_administrator(
     client: TestClient,
     active_manager_user: User,
+    active_employee_user: User,
+    auth_headers: Callable[[User], dict[str, str]],
+) -> None:
+    """Company Administrator is not a singular role - a second, distinct
+    Company Administrator (active_manager_user, formerly a Manager before
+    that role was merged in) has identical permissions to the first,
+    including setting another user's password, which used to be
+    Administrator-only."""
+    response = client.patch(
+        f"/users/{active_employee_user.id}/password",
+        json={"new_password": "SetByAdmin2_1!"},
+        headers=auth_headers(active_manager_user),
+    )
+    assert response.status_code == 200
+
+
+def test_admin_set_password_forbidden_for_non_admin(
+    client: TestClient,
+    active_technician_user: User,
     active_employee_user: User,
     auth_headers: Callable[[User], dict[str, str]],
 ) -> None:
     response = client.patch(
         f"/users/{active_employee_user.id}/password",
         json={"new_password": "ShouldNotWork1!"},
-        headers=auth_headers(active_manager_user),
+        headers=auth_headers(active_technician_user),
     )
     assert response.status_code == 403
 

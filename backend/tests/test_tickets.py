@@ -404,12 +404,13 @@ def test_create_ticket_new_retries_ticket_number_on_integrity_error(
 
     service = TicketService(
         db=_NoopSession(),
+        company_id=1,
         ticket_repository=ticket_repo,
         category_repository=category_repo,
         priority_repository=priority_repo,
         user_repository=FakeUserRepository([active_employee_user]),
         history_service=HistoryService(
-            db=_NoopSession(), history_repository=FakeHistoryRepository()
+            db=_NoopSession(), company_id=1, history_repository=FakeHistoryRepository()
         ),
     )
 
@@ -428,6 +429,7 @@ def test_change_status_service_raises_domain_error_for_missing_ticket(
 ) -> None:
     service = TicketService(
         db=_NoopSession(),
+        company_id=1,
         ticket_repository=_minimal_repository([]),
         category_repository=_FakeCategoryLookup({}),
         priority_repository=_FakePriorityLookup({}),

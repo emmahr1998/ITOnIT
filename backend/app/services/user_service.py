@@ -11,9 +11,9 @@ from app.repositories.user import UserRepository
 from app.schemas.user import AdminPasswordSetRequest, PasswordChangeRequest, UserCreate, UserUpdate
 
 # Fields a user may change on their own profile via PATCH /users/{id}.
-# Anything else on UserUpdate is administrative and Admin-only.
-_SELF_EDITABLE_FIELDS = frozenset({"first_name", "last_name", "phone_number", "theme"})
-_MANAGE_ROLES = frozenset({"Manager", "Administrator"})
+# Anything else on UserUpdate is Company-Administrator-only.
+_SELF_EDITABLE_FIELDS = frozenset({"first_name", "last_name", "phone_number"})
+_MANAGE_ROLES = frozenset({"Company Administrator"})
 
 
 class UserNotFoundError(Exception):
@@ -55,18 +55,27 @@ class UserService:
 
     Also owns the transaction boundary for writes - repositories only
     flush (see BaseRepository), so commit()/rollback() happen here.
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input -
+    every user this service reads, writes, or checks uniqueness against is
+    confined to it. role_repository is deliberately NOT scoped: roles
+    (Employee/Technician/Company Administrator/System Administrator) are
+    shared platform vocabulary, not company-owned data.
     """
 
     def __init__(
         self,
         db: Session,
+        company_id: int,
         user_repository: UserRepository | None = None,
         role_repository: RoleRepository | None = None,
         department_repository: DepartmentRepository | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._user_repository = (
-            user_repository if user_repository is not None else UserRepository(db)
+            user_repository if user_repository is not None else UserRepository(db, company_id)
         )
         self._role_repository = (
             role_repository if role_repository is not None else RoleRepository(db)
@@ -74,7 +83,7 @@ class UserService:
         self._department_repository = (
             department_repository
             if department_repository is not None
-            else DepartmentRepository(db)
+            else DepartmentRepository(db, company_id)
         )
 
     def list_users(
@@ -107,8 +116,8 @@ class UserService:
         return user
 
     def get_user_for_viewer(self, user_id: int, viewer: User) -> User:
-        """GET /users/{id}: Manager/Admin may view anyone; everyone else
-        may only view their own record.
+        """GET /users/{id}: a Company Administrator may view anyone in
+        their own company; everyone else may only view their own record.
         """
         if viewer.role.name not in _MANAGE_ROLES and viewer.id != user_id:
             raise UserPermissionError
@@ -139,6 +148,7 @@ class UserService:
         )
 
         user = User(
+            company_id=self._company_id,
             username=payload.username,
             first_name=payload.first_name,
             last_name=payload.last_name,
@@ -146,7 +156,6 @@ class UserService:
             phone_number=payload.phone_number,
             department_id=payload.department_id,
             role_id=payload.role_id,
-            theme=payload.theme,
             password_hash=hash_password(payload.password),
             is_active=True,
         )
@@ -169,13 +178,15 @@ class UserService:
     def update_user(self, user_id: int, payload: UserUpdate, *, current_user: User) -> User:
         """Apply a partial update, enforcing the admin-vs-self field split.
 
-        An Administrator may set any field on any user. Anyone else may
-        only edit their own profile (user_id == current_user.id), and only
+        A Company Administrator may set any field on any user in their own
+        company - any number of Company Administrators may exist per
+        company, all with identical permissions here. Anyone else may only
+        edit their own profile (user_id == current_user.id), and only
         the "safe" fields in _SELF_EDITABLE_FIELDS - submitting any other
         field with a non-None value is rejected outright rather than
         silently ignored.
         """
-        is_admin = current_user.role.name == "Administrator"
+        is_admin = current_user.role.name == "Company Administrator"
         fields_set = payload.model_fields_set
 
         if not is_admin:
@@ -217,8 +228,6 @@ class UserService:
             user.last_name = payload.last_name
         if "phone_number" in fields_set:
             user.phone_number = payload.phone_number
-        if "theme" in fields_set:
-            user.theme = payload.theme
 
         try:
             self._user_repository.update(user)

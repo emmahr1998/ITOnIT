@@ -32,6 +32,10 @@
   animation: riseIn var(--transition-base);
 }
 
+.panelWide {
+  max-width: 900px;
+}
+
 .header {
   display: flex;
   align-items: center;

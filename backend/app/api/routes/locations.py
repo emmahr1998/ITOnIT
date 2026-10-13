@@ -12,10 +12,7 @@ from app.services.location_service import (
 
 router = APIRouter(prefix="/locations", tags=["Locations"])
 
-# Locations are managed by Administrators only - unlike Departments/Priorities,
-# which Managers may also manage - per the explicit "Admin can create/edit/
-# deactivate" requirement.
-_MANAGE_ROLES = ("Administrator",)
+_MANAGE_ROLES = ("Company Administrator",)
 
 
 @router.get("", response_model=DataResponse[list[LocationResponse]])
