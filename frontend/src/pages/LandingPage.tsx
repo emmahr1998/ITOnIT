@@ -18,6 +18,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { Mascot } from "../components/common/Mascot";
+import { PublicFooter } from "../components/public/PublicFooter";
 import { PublicNavbar } from "../components/public/PublicNavbar";
 import { useAuth } from "../auth/useAuth";
 import styles from "./LandingPage.module.css";
@@ -279,41 +280,7 @@ export function LandingPage() {
         </section>
       </main>
 
-      <footer className={styles.footer}>
-        <div className={styles.footerTop}>
-          <div className={styles.footerBrand}>
-            <div className={styles.footerBrandRow}>
-              <Mascot size={28} />
-              <span>ITOnIT</span>
-            </div>
-            <p className={styles.footerTagline}>Fast, modern IT support for your organization.</p>
-          </div>
-
-          <div className={styles.footerColumns}>
-            <div className={styles.footerColumn}>
-              <span className={styles.footerColumnTitle}>Product</span>
-              <a href="#features">Features</a>
-              <a href="#how-it-works">How It Works</a>
-              <a href="#roles">Roles</a>
-            </div>
-            <div className={styles.footerColumn}>
-              <span className={styles.footerColumnTitle}>Account</span>
-              <Link to="/login">Sign In</Link>
-              <Link to="/register">Register Company</Link>
-            </div>
-          </div>
-        </div>
-
-        <div className={styles.footerBottom}>
-          <span className={styles.footerNote}>
-            <CheckCircle2 size={14} strokeWidth={2} /> Registering creates your company&rsquo;s
-            workspace with you as its Company Administrator.
-          </span>
-          <Link to="/platform/login" className={styles.platformLink}>
-            Platform Administration
-          </Link>
-        </div>
-      </footer>
+      <PublicFooter />
     </div>
   );
 }
