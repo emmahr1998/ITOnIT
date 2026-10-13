@@ -1,9 +1,11 @@
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 
 from app.core.config import settings
 
 _WELCOME_EMAIL_SUBJECT = "Welcome to ITOnIT - Your Company Code"
+_SUPPORT_EMAIL_SUBJECT_PREFIX = "[ITOnIT Support] "
 
 
 def _build_welcome_email_body(company_name: str, company_code: str) -> str:
@@ -20,13 +22,36 @@ def _build_welcome_email_body(company_name: str, company_code: str) -> str:
     )
 
 
+def _build_support_contact_email_body(sender_name: str, sender_email: str, message: str) -> str:
+    sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        "New message from the ITOnIT public contact form.\n\n"
+        f"Name: {sender_name}\n"
+        f"Email: {sender_email}\n"
+        f"Sent: {sent_at}\n\n"
+        "Message:\n"
+        f"{message}"
+    )
+
+
+def _sanitize_header_value(value: str) -> str:
+    """Strips CR/LF from a value before it's ever placed in an email
+    header - defense in depth against header injection, on top of (not
+    instead of) the request schema's own validation (SupportContactRequest
+    rejects a name/subject containing a line break at the API boundary
+    already - see app/schemas/support.py). A header value genuinely never
+    needs an embedded newline, so collapsing one to a space can't lose any
+    legitimate content."""
+    return value.replace("\r", " ").replace("\n", " ").strip()
+
+
 class EmailNotConfiguredError(Exception):
-    """Raised by send_company_registered_email when SMTP_HOST/SMTP_USERNAME/
-    SMTP_PASSWORD/SMTP_FROM_EMAIL aren't all set - a normal, expected state
-    (e.g. a contributor's fresh local .env with no SMTP section yet), not a
-    delivery failure. CompanyService checks is_configured before calling
-    send_company_registered_email at all (see its own docstring), so this
-    is only ever raised if a caller skips that check."""
+    """Raised when SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD/SMTP_FROM_EMAIL
+    aren't all set - a normal, expected state (e.g. a contributor's fresh
+    local .env with no SMTP section yet), not a delivery failure. Callers
+    check is_configured before calling either send method at all (see each
+    one's own docstring), so this is only ever raised if a caller skips
+    that check."""
 
 
 class SmtpEmailService:
@@ -34,16 +59,20 @@ class SmtpEmailService:
     587), using only the standard library (smtplib + email.message) - no
     external email dependency, per this project's $0-cost constraint.
 
-    Deliberately narrow: one method, for the one transactional email this
-    project sends. Deliberately does NOT swallow exceptions -
-    send_company_registered_email builds the message and sends it, raising
-    normally (EmailNotConfiguredError, or whatever smtplib/socket raises on
-    a real delivery failure) if anything goes wrong. Isolating a delivery
-    failure from an otherwise-successful, already-committed registration is
-    the caller's job (CompanyService.register_company), not this class's -
-    see that method's own docstring. Keeping transport behavior (this
-    class) separate from failure policy (the caller) means this class's
-    behavior is simple to reason about and test on its own.
+    Two narrow methods, one per transactional email this project sends -
+    company-registration's welcome email, and the public Help Center
+    contact form - both routed through the same SMTP account/connection
+    logic (_send), never a second, separate SMTP implementation. Neither
+    method swallows exceptions: each builds its message and sends it,
+    raising normally (EmailNotConfiguredError, or whatever smtplib/the
+    socket layer raises on a real delivery failure) if anything goes
+    wrong. Isolating a delivery failure from the caller's own success/
+    failure policy is each caller's job (CompanyService.register_company
+    treats it as best-effort; SupportService.send_contact_message does
+    not - see each one's own docstring), not this class's. Keeping
+    transport behavior (this class) separate from failure policy (the
+    callers) means this class's behavior is simple to reason about and
+    test on its own.
     """
 
     def __init__(
@@ -65,10 +94,23 @@ class SmtpEmailService:
     @property
     def is_configured(self) -> bool:
         """True once every setting an actual send needs is present. Checked
-        by CompanyService before it ever calls send_company_registered_email
-        - see this class's own docstring on why "not configured" is treated
-        as a distinct, expected state rather than a delivery failure."""
+        by every caller before it ever calls send_company_registered_email/
+        send_support_contact_email - see this class's own docstring on why
+        "not configured" is treated as a distinct, expected state rather
+        than a delivery failure."""
         return bool(self._host and self._username and self._password and self._from_email)
+
+    def _from_header(self) -> str:
+        return f"{self._from_name} <{self._from_email}>" if self._from_name else self._from_email
+
+    def _send(self, message: EmailMessage) -> None:
+        """The one place either public method actually opens an SMTP
+        connection - everything above this is message-building, specific
+        to which email is being sent."""
+        with smtplib.SMTP(self._host, self._port, timeout=10) as smtp:
+            smtp.starttls()
+            smtp.login(self._username, self._password)
+            smtp.send_message(message)
 
     def send_company_registered_email(
         self, to_email: str, company_name: str, company_code: str
@@ -86,12 +128,44 @@ class SmtpEmailService:
 
         message = EmailMessage()
         message["Subject"] = _WELCOME_EMAIL_SUBJECT
-        from_header = f"{self._from_name} <{self._from_email}>" if self._from_name else self._from_email
-        message["From"] = from_header
+        message["From"] = self._from_header()
         message["To"] = to_email
         message.set_content(_build_welcome_email_body(company_name, company_code))
 
-        with smtplib.SMTP(self._host, self._port, timeout=10) as smtp:
-            smtp.starttls()
-            smtp.login(self._username, self._password)
-            smtp.send_message(message)
+        self._send(message)
+
+    def send_support_contact_email(
+        self,
+        to_email: str,
+        sender_name: str,
+        sender_email: str,
+        subject: str,
+        message_body: str,
+    ) -> None:
+        """Sends a public Help Center contact-form submission to
+        `to_email` (SUPPORT_EMAIL). Reply-To is set to the submitter's own,
+        already-validated email address (SupportContactRequest's email
+        field - see app/schemas/support.py) so replying in Gmail reaches
+        them directly, without ever putting unvalidated input in the From
+        header. Raises EmailNotConfiguredError if SMTP isn't configured, or
+        propagates whatever smtplib/the socket layer raises on an actual
+        send failure - never swallowed here (see the class docstring);
+        SupportService is the caller that decides what to do about it.
+        """
+        if not self.is_configured:
+            raise EmailNotConfiguredError(
+                "SMTP is not configured (SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD/SMTP_FROM_EMAIL)"
+            )
+
+        message = EmailMessage()
+        message["Subject"] = _SUPPORT_EMAIL_SUBJECT_PREFIX + _sanitize_header_value(subject)
+        message["From"] = self._from_header()
+        message["To"] = to_email
+        message["Reply-To"] = _sanitize_header_value(sender_email)
+        message.set_content(
+            _build_support_contact_email_body(
+                _sanitize_header_value(sender_name), sender_email, message_body
+            )
+        )
+
+        self._send(message)

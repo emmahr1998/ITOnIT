@@ -83,6 +83,16 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: Optional[str] = None
     SMTP_FROM_NAME: Optional[str] = "ITOnIT"
 
+    # Optional: destination address for the public Help Center contact
+    # form (POST /support/contact - see app/services/support_service.py).
+    # Reuses the SMTP_* settings above, never a second email account/
+    # implementation. Deliberately no default - never hard-code a real
+    # destination address in source; set it in your local .env only. If
+    # unset (or SMTP itself isn't configured), the contact form returns a
+    # safe error to the caller rather than silently failing - see
+    # SupportService.send_contact_message.
+    SUPPORT_EMAIL: Optional[str] = None
+
 
 @lru_cache
 def get_settings() -> Settings:

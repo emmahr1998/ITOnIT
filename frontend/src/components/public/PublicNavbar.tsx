@@ -5,9 +5,10 @@ import { Mascot } from "../common/Mascot";
 import styles from "./PublicNavbar.module.css";
 
 const NAV_LINKS = [
-  { label: "Features", href: "#features" },
-  { label: "How It Works", href: "#how-it-works" },
-  { label: "Roles", href: "#roles" },
+  { label: "Features", to: "/features" },
+  { label: "How It Works", to: "/how-it-works" },
+  { label: "Roles", to: "/roles" },
+  { label: "Help", to: "/help" },
 ];
 
 /**
@@ -53,9 +54,9 @@ export function PublicNavbar() {
 
         <nav className={styles.desktopNav} aria-label="Primary">
           {NAV_LINKS.map((link) => (
-            <a key={link.href} href={link.href} className={styles.navLink}>
+            <Link key={link.to} to={link.to} className={styles.navLink}>
               {link.label}
-            </a>
+            </Link>
           ))}
         </nav>
 
@@ -84,9 +85,14 @@ export function PublicNavbar() {
         <div className={styles.mobileMenu}>
           <nav aria-label="Primary" className={styles.mobileNav}>
             {NAV_LINKS.map((link) => (
-              <a key={link.href} href={link.href} className={styles.mobileNavLink} onClick={close}>
+              <Link
+                key={link.to}
+                to={link.to}
+                className={styles.mobileNavLink}
+                onClick={close}
+              >
                 {link.label}
-              </a>
+              </Link>
             ))}
           </nav>
           <div className={styles.mobileActions}>
