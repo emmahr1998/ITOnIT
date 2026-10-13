@@ -1,8 +1,10 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now_naive
 from app.models.category import Category
 from app.models.enums import TicketStatus
 from app.models.location import Location
@@ -17,9 +19,10 @@ from app.repositories.user import UserRepository
 from app.schemas.ticket import TicketNewCreate, TicketPatch
 from app.services.history_service import HistoryService
 from app.services.storage_service import StorageService
+from app.services.ticket_inventory_service import TicketInventoryService
 
 TECHNICIAN_ROLE_NAME = "Technician"
-_MANAGE_ROLE_NAMES = ("Manager", "Administrator")
+_MANAGE_ROLE_NAMES = ("Company Administrator",)
 
 # NEW is this system's "OPEN" - the enum (app.models.enums.TicketStatus) has no
 # OPEN member. ASSIGNED/WAITING_FOR_EMPLOYEE are given a real, reachable place
@@ -62,7 +65,7 @@ class TicketRequesterNotFoundError(Exception):
 class TicketPermissionError(Exception):
     """Raised when the current user has no access to this ticket at all, or -
     for ticket creation - tries to set a requester other than themselves
-    without being a Manager/Administrator.
+    without being a Company Administrator.
     """
 
 
@@ -86,16 +89,49 @@ class InvalidStatusTransitionError(Exception):
         self.message = message
 
 
+@dataclass(frozen=True)
+class TicketOwnershipScope:
+    """The one canonical ticket ownership/visibility rule, shared by
+    every ticket-scoped read - normal ticket listing (list_tickets) and
+    ticket analytics (AnalyticsService) alike. See
+    TicketService.resolve_ownership_scope's docstring for the rule itself.
+
+    Each field is None when that dimension is unrestricted - which only
+    ever happens for both fields at once (Company Administrator sees the
+    whole company); Technician and Employee each always have exactly one
+    field set to their own id. is_company_wide is the same check made
+    explicit, rather than callers re-deriving "both fields None" for
+    themselves at every use site.
+    """
+
+    created_by_user_id: int | None
+    assigned_technician_id: int | None
+
+    @property
+    def is_company_wide(self) -> bool:
+        return self.created_by_user_id is None and self.assigned_technician_id is None
+
+
 class TicketService:
     """Owns ticket business rules: ownership scope, status workflow, assignment validation.
 
     Also owns the transaction boundary for writes (see CategoryService for
     the same convention - repositories only flush, never commit).
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input.
+    It scopes every repository this service touches - including the
+    internal UserRepository, which is why a technician-assignment or
+    requester-override lookup can never resolve to another company's user
+    (UserRepository normally defaults to unscoped for auth's benefit - see
+    its own docstring - but this service always supplies company_id
+    explicitly, so that default never applies here).
     """
 
     def __init__(
         self,
         db: Session,
+        company_id: int,
         ticket_repository: TicketRepository | None = None,
         category_repository: CategoryRepository | None = None,
         priority_repository: PriorityRepository | None = None,
@@ -103,28 +139,41 @@ class TicketService:
         user_repository: UserRepository | None = None,
         history_service: HistoryService | None = None,
         storage_service: StorageService | None = None,
+        ticket_inventory_service: TicketInventoryService | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._ticket_repository = (
-            ticket_repository if ticket_repository is not None else TicketRepository(db)
+            ticket_repository if ticket_repository is not None else TicketRepository(db, company_id)
         )
         self._category_repository = (
-            category_repository if category_repository is not None else CategoryRepository(db)
+            category_repository
+            if category_repository is not None
+            else CategoryRepository(db, company_id)
         )
         self._priority_repository = (
-            priority_repository if priority_repository is not None else PriorityRepository(db)
+            priority_repository
+            if priority_repository is not None
+            else PriorityRepository(db, company_id)
         )
         self._location_repository = (
-            location_repository if location_repository is not None else LocationRepository(db)
+            location_repository
+            if location_repository is not None
+            else LocationRepository(db, company_id)
         )
         self._user_repository = (
-            user_repository if user_repository is not None else UserRepository(db)
+            user_repository if user_repository is not None else UserRepository(db, company_id)
         )
         self._history_service = (
-            history_service if history_service is not None else HistoryService(db)
+            history_service if history_service is not None else HistoryService(db, company_id)
         )
         self._storage_service = (
             storage_service if storage_service is not None else StorageService()
+        )
+        self._ticket_inventory_service = (
+            ticket_inventory_service
+            if ticket_inventory_service is not None
+            else TicketInventoryService(db, company_id)
         )
 
     # ---- ownership -----------------------------------------------------
@@ -132,6 +181,29 @@ class TicketService:
     @staticmethod
     def _is_manager_or_admin(user: User) -> bool:
         return user.role.name in _MANAGE_ROLE_NAMES
+
+    @staticmethod
+    def resolve_ownership_scope(current_user: User) -> TicketOwnershipScope:
+        """The one canonical ticket ownership/visibility rule:
+
+        - Company Administrator: all tickets in their company (both
+          fields None - no restriction).
+        - Technician: only tickets assigned to that technician.
+        - Employee: only tickets created by that employee.
+
+        Every ticket-scoped read must call this - never re-derive the
+        role check inline - so normal ticket listing and ticket analytics
+        can never drift apart on who is allowed to see what.
+        """
+        if TicketService._is_manager_or_admin(current_user):
+            return TicketOwnershipScope(created_by_user_id=None, assigned_technician_id=None)
+        if current_user.role.name == TECHNICIAN_ROLE_NAME:
+            return TicketOwnershipScope(
+                created_by_user_id=None, assigned_technician_id=current_user.id
+            )
+        return TicketOwnershipScope(
+            created_by_user_id=current_user.id, assigned_technician_id=None
+        )
 
     def _ensure_can_view(self, ticket: Ticket, user: User) -> None:
         if self._is_manager_or_admin(user):
@@ -179,15 +251,15 @@ class TicketService:
         skip: int | None = None,
         limit: int | None = None,
     ) -> list[Ticket]:
-        """Backs both GET /tickets (no search/sort/pagination passed) and
-        GET /all-tickets (the full filter set) - the ownership scoping
-        below applies identically to both.
+        """Backs GET /all-tickets (the full filter set). Callers that pass no
+        search/sort/pagination get every matching ticket; the ownership
+        scoping below applies identically either way.
         """
-        if not self._is_manager_or_admin(current_user):
-            if current_user.role.name == TECHNICIAN_ROLE_NAME:
-                assigned_to = current_user.id  # hard scope; overrides any client value
-            else:
-                created_by = current_user.id  # hard scope; overrides any client value
+        scope = self.resolve_ownership_scope(current_user)
+        if scope.created_by_user_id is not None:
+            created_by = scope.created_by_user_id  # hard scope; overrides any client value
+        if scope.assigned_technician_id is not None:
+            assigned_to = scope.assigned_technician_id  # hard scope; overrides any client value
 
         return self._ticket_repository.get_with_filters(
             status=status,
@@ -226,6 +298,7 @@ class TicketService:
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             ticket = Ticket(
+                company_id=self._company_id,
                 ticket_number=self._generate_ticket_number(),
                 title=title,
                 description=description,
@@ -261,10 +334,10 @@ class TicketService:
         raise AssertionError("unreachable: loop always returns or re-raises")
 
     def create_ticket_new(self, current_user: User, payload: TicketNewCreate) -> Ticket:
-        """POST /ticket-new: same as create_ticket, but a Manager/Administrator
-        may set requester_user_id to create the ticket on behalf of someone
-        else. Anyone else supplying a requester_user_id other than their own
-        id is rejected outright.
+        """POST /ticket-new: same as create_ticket, but a Company
+        Administrator may set requester_user_id to create the ticket on
+        behalf of someone else. Anyone else supplying a requester_user_id
+        other than their own id is rejected outright.
         """
         category = self._get_category_or_raise(payload.category_id)
         priority = self._get_priority_or_raise(payload.priority_id)
@@ -367,11 +440,20 @@ class TicketService:
         self._db.commit()
         return ticket
 
-    def delete_ticket(self, ticket_id: int) -> None:
-        # Role gate (Manager/Administrator only) is enforced at the route.
+    def delete_ticket(self, ticket_id: int, current_user: User) -> None:
+        # Role gate (Company Administrator only) is enforced at the route.
         ticket = self._ticket_repository.get_by_id(ticket_id)
         if ticket is None:
             raise TicketNotFoundError
+
+        # Revert any RESERVED/CONSUMED inventory attached to this ticket
+        # first, so deleting it never leaves an item permanently stuck
+        # RESERVED/IN_USE with no owning ticket - see
+        # TicketInventoryService.release_all_for_ticket. current_user (the
+        # Company Administrator deleting the ticket) is who Phase 12.1's
+        # InventoryTransaction rows for this cleanup attribute the action
+        # to - not whoever originally reserved/consumed each item.
+        self._ticket_inventory_service.release_all_for_ticket(ticket, current_user)
 
         # Capture file paths before the cascade delete removes the
         # attachment rows. The DB delete commits first, then physical files
@@ -388,7 +470,7 @@ class TicketService:
     def assign_technician(
         self, current_user: User, ticket_id: int, technician_id: int
     ) -> Ticket:
-        # Role gate (Manager/Administrator only) is enforced at the route.
+        # Role gate (Company Administrator only) is enforced at the route.
         ticket = self._ticket_repository.get_by_id(ticket_id)
         if ticket is None:
             raise TicketNotFoundError
@@ -430,7 +512,7 @@ class TicketService:
     def change_status(
         self, current_user: User, ticket_id: int, new_status: TicketStatus
     ) -> Ticket:
-        # Role gate (Technician/Manager/Administrator, not Employee) is
+        # Role gate (Technician/Company Administrator, not Employee) is
         # enforced at the route; the technician-must-be-assigned check below
         # is ownership, not role, so it belongs here.
         ticket = self._ticket_repository.get_by_id(ticket_id)
@@ -450,7 +532,7 @@ class TicketService:
 
         old_status = ticket.status.value
         ticket.status = new_status
-        now = datetime.now(timezone.utc)
+        now = utc_now_naive()
         if new_status == TicketStatus.RESOLVED:
             ticket.resolved_at = now
         elif new_status == TicketStatus.CLOSED:

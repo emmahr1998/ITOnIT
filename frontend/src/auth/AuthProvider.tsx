@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { fetchCurrentUser, loginRequest, registerRequest } from "../api/auth";
+import { fetchCurrentUser, loginRequest, registerCompanyRequest } from "../api/auth";
 import { getApiErrorMessage } from "../api/client";
+import { loginPlatformRequest } from "../api/platform";
 import { tokenStore } from "../api/tokenStore";
-import type { CurrentUser, RegisterRequest } from "../types/auth";
+import type { CompanyRegisterRequest, CurrentUser } from "../types/auth";
 import { AuthContext, type AuthStatus } from "./AuthContext";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -62,10 +63,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
+  const login = useCallback(async (companyCode: string, username: string, password: string) => {
     setError(null);
     try {
-      const tokens = await loginRequest({ username, password });
+      const tokens = await loginRequest({ company_code: companyCode, username, password });
       tokenStore.setTokens({ access: tokens.access, refresh: tokens.refresh });
       const currentUser = await fetchCurrentUser();
       setUser(currentUser);
@@ -78,10 +79,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const register = useCallback(async (payload: RegisterRequest) => {
+  const loginPlatform = useCallback(async (username: string, password: string) => {
     setError(null);
     try {
-      const tokens = await registerRequest(payload);
+      const tokens = await loginPlatformRequest({ username, password });
       tokenStore.setTokens({ access: tokens.access, refresh: tokens.refresh });
       const currentUser = await fetchCurrentUser();
       setUser(currentUser);
@@ -89,14 +90,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       tokenStore.clear();
       setStatus("unauthenticated");
-      setError(getApiErrorMessage(err, "Registration failed. Please try again."));
+      setError(getApiErrorMessage(err, "Login failed. Please try again."));
+      throw err;
+    }
+  }, []);
+
+  const registerCompany = useCallback(async (payload: CompanyRegisterRequest) => {
+    setError(null);
+    try {
+      const tokens = await registerCompanyRequest(payload);
+      tokenStore.setTokens({ access: tokens.access, refresh: tokens.refresh });
+      const currentUser = await fetchCurrentUser();
+      setUser(currentUser);
+      setStatus("authenticated");
+      return tokens.company_code;
+    } catch (err) {
+      tokenStore.clear();
+      setStatus("unauthenticated");
+      setError(getApiErrorMessage(err, "Company registration failed. Please try again."));
       throw err;
     }
   }, []);
 
   const value = useMemo(
-    () => ({ user, status, error, login, register, logout }),
-    [user, status, error, login, register, logout],
+    () => ({ user, status, error, login, loginPlatform, registerCompany, logout }),
+    [user, status, error, login, loginPlatform, registerCompany, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

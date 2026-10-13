@@ -121,6 +121,37 @@
   text-decoration: underline;
 }
 
+.changeCompanyButton {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.changeCompanyButton:hover {
+  text-decoration: underline;
+}
+
+.companyBadge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+}
+
+.companyLogo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+}
+
 .nameRow {
   display: grid;
   grid-template-columns: 1fr 1fr;

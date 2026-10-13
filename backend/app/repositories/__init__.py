@@ -2,6 +2,7 @@ from app.repositories.attachment import AttachmentRepository
 from app.repositories.base import BaseRepository
 from app.repositories.category import CategoryRepository
 from app.repositories.comment import CommentRepository
+from app.repositories.company import CompanyRepository
 from app.repositories.department import DepartmentRepository
 from app.repositories.history import HistoryRepository
 from app.repositories.location import LocationRepository
@@ -15,6 +16,7 @@ __all__ = [
     "BaseRepository",
     "CategoryRepository",
     "CommentRepository",
+    "CompanyRepository",
     "DepartmentRepository",
     "HistoryRepository",
     "LocationRepository",

@@ -24,14 +24,14 @@ interface TicketSidebarProps {
 
 /**
  * The ticket's whole right-hand "properties" panel - both the read-only
- * fields (category, location, creator, dates) and the fields a Manager/
+ * fields (category, location, creator, dates) and the fields a Company
  * Administrator/assigned Technician can edit (status, priority, assignee).
  * Everyone sees the same panel; only the editable controls are conditional.
  */
 export function TicketSidebar({ ticket, onUpdated }: TicketSidebarProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const canManage = user?.role === "Manager" || user?.role === "Administrator";
+  const canManage = user?.role === "Company Administrator";
   const canChangeStatus = canManage || user?.role === "Technician";
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);

@@ -37,22 +37,30 @@ class AttachmentService:
 
     Also owns the transaction boundary for metadata writes (same convention
     as CategoryService/TicketService/CommentService).
+
+    company_id always comes from the authenticated caller (see
+    app.dependencies.auth.get_current_company_id), never from client input -
+    it is denormalized from the parent ticket, same as on the model itself.
     """
 
     def __init__(
         self,
         db: Session,
+        company_id: int,
         attachment_repository: AttachmentRepository | None = None,
         storage_service: StorageService | None = None,
         history_service: HistoryService | None = None,
     ) -> None:
         self._db = db
+        self._company_id = company_id
         self._attachment_repository = (
-            attachment_repository if attachment_repository is not None else AttachmentRepository(db)
+            attachment_repository
+            if attachment_repository is not None
+            else AttachmentRepository(db, company_id)
         )
         self._storage_service = storage_service if storage_service is not None else StorageService()
         self._history_service = (
-            history_service if history_service is not None else HistoryService(db)
+            history_service if history_service is not None else HistoryService(db, company_id)
         )
 
     def list_attachments(self, ticket_id: int) -> list[Attachment]:
@@ -93,6 +101,7 @@ class AttachmentService:
         )
 
         attachment = Attachment(
+            company_id=self._company_id,
             ticket_id=ticket_id,
             uploaded_by_user_id=current_user.id,
             original_filename=original_filename,

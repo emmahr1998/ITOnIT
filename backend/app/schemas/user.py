@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.department import DepartmentResponse
+from app.schemas.types import UTCDatetime
 from app.schemas.validators import validate_email_format
 
 
@@ -22,7 +21,6 @@ class UserCreate(BaseModel):
     phone_number: str | None = Field(default=None, max_length=30)
     password: str = Field(min_length=8)
     role_id: int
-    theme: str | None = Field(default=None, max_length=20)
 
     @field_validator("username", "first_name", "last_name", "email")
     @classmethod
@@ -42,10 +40,10 @@ class UserUpdate(BaseModel):
     """PATCH /users/{id} request body - partial update, never a password.
 
     Administrative fields (username, email, role_id, is_active,
-    department_id) may only be changed by an Administrator. A user editing
-    their own profile may only change the "safe" fields: first_name,
-    last_name, phone_number, theme. UserService enforces this split - it
-    is never duplicated in the route.
+    department_id) may only be changed by a Company Administrator. A user
+    editing their own profile may only change the "safe" fields:
+    first_name, last_name, phone_number. UserService enforces this
+    split - it is never duplicated in the route.
     """
 
     username: str | None = Field(default=None, min_length=1, max_length=50)
@@ -56,7 +54,6 @@ class UserUpdate(BaseModel):
     phone_number: str | None = Field(default=None, max_length=30)
     role_id: int | None = None
     is_active: bool | None = None
-    theme: str | None = Field(default=None, max_length=20)
 
     @field_validator("username", "first_name", "last_name", "email")
     @classmethod
@@ -102,10 +99,9 @@ class UserResponse(BaseModel):
     phone_number: str | None
     department: DepartmentResponse | None
     role: str
-    theme: str | None
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDatetime
+    updated_at: UTCDatetime
 
     @field_validator("role", mode="before")
     @classmethod

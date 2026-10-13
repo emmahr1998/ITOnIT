@@ -42,8 +42,8 @@ const VALID_VIEWS = new Set<TicketDashboardView>([
 const HEADING_BY_ROLE: Record<Role, string> = {
   Employee: "My Tickets",
   Technician: "Assigned Tickets",
-  Manager: "All Tickets",
-  Administrator: "All Tickets",
+  "Company Administrator": "All Tickets",
+  "System Administrator": "All Tickets",
 };
 
 /** "Age" column display: days open (or, if resolved/closed, how long it stayed open). */
@@ -71,13 +71,13 @@ const EMPTY_STATE_BY_ROLE: Record<Role, { title: string; description: string }> 
   },
   Technician: {
     title: "Nothing assigned to you yet",
-    description: "Tickets assigned to you by a manager will appear here.",
+    description: "Tickets assigned to you by an administrator will appear here.",
   },
-  Manager: {
+  "Company Administrator": {
     title: "No tickets yet",
-    description: "Tickets created by your team will appear here.",
+    description: "Tickets created across the organization will appear here.",
   },
-  Administrator: {
+  "System Administrator": {
     title: "No tickets yet",
     description: "Tickets created across the organization will appear here.",
   },
@@ -340,7 +340,7 @@ export function TicketListPage() {
               title={emptyCopy.title}
               description={emptyCopy.description}
               action={
-                user && (user.role === "Employee" || user.role === "Manager" || user.role === "Administrator")
+                user && (user.role === "Employee" || user.role === "Company Administrator")
                   ? { label: "Create Ticket", to: "/tickets/new" }
                   : undefined
               }

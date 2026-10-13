@@ -12,9 +12,8 @@ import { UserEditModal } from "../../components/admin/UserEditModal";
 import { UserPasswordModal } from "../../components/admin/UserPasswordModal";
 import { CreateUserModal } from "../../components/admin/CreateUserModal";
 import { ROLE_ID_BY_NAME, ROLE_OPTIONS } from "../../types/user";
-import type { AdminUser } from "../../types/user";
+import type { AdminUser, AssignableRole } from "../../types/user";
 import type { Department } from "../../types/department";
-import type { Role } from "../../types/auth";
 import styles from "./UsersPage.module.css";
 
 const SEARCH_DEBOUNCE_MS = 350;
@@ -29,7 +28,7 @@ export function UsersPage() {
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState<Role | "">("");
+  const [roleFilter, setRoleFilter] = useState<AssignableRole | "">("");
   const [departmentFilter, setDepartmentFilter] = useState("");
 
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -141,7 +140,7 @@ export function UsersPage() {
         </div>
         <select
           value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value as Role | "")}
+          onChange={(e) => setRoleFilter(e.target.value as AssignableRole | "")}
           className="select"
           aria-label="Filter by role"
         >

@@ -1,0 +1,27 @@
+/*
+ * HowItWorksPage reuses LandingPage.module.css for everything except its
+ * step grid: the landing page's own #how-it-works section has 5 steps
+ * (matching .workflowSteps' repeat(5, 1fr)), but this dedicated page walks
+ * through 6, so it needs its own column count.
+ */
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+@media (max-width: 1024px) {
+  .steps {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .steps {
+    grid-template-columns: 1fr;
+  }
+}

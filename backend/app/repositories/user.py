@@ -4,45 +4,91 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.user import User
 from app.repositories.base import BaseRepository
 
-_EAGER_OPTIONS = (selectinload(User.role), selectinload(User.department))
+_EAGER_OPTIONS = (
+    selectinload(User.role),
+    selectinload(User.department),
+    selectinload(User.company),
+)
 
 
 class UserRepository(BaseRepository[User]):
-    """User lookups needed for authentication and user management."""
+    """User lookups needed for authentication and user management.
 
-    def __init__(self, db: Session) -> None:
+    Deliberately NOT built on CompanyScopedRepository. Two different auth
+    call sites need two different kinds of scoping, neither of which fits
+    "always scoped at construction time":
+      - get_current_user (via get_by_id) must resolve "who is this JWT for"
+        with no company known yet at all - the company is derived *from*
+        the user this call finds, not the other way around. Constructed
+        with company_id=None (unscoped).
+      - AuthService.login (via get_by_username_or_email) resolves the
+        company first, from the request's company_code, then looks up the
+        user *within* that company - but the company differs on every call,
+        so it's passed as an explicit method parameter rather than fixed at
+        construction time.
+    Every user-management call site (UserService, via get_user_service)
+    fits the normal pattern: company known once per request, fixed at
+    construction, scoping every method below via self.company_id/_scope().
+    """
+
+    def __init__(self, db: Session, company_id: int | None = None) -> None:
         super().__init__(db, User)
+        self.company_id = company_id
+
+    def _scope(self, stmt):
+        if self.company_id is not None:
+            stmt = stmt.where(User.company_id == self.company_id)
+        return stmt
 
     def get_by_id(self, id_: int) -> User | None:
-        """Overrides BaseRepository.get_by_id to eager-load role/department,
-        which every UserResponse needs."""
-        return self.db.scalar(select(User).where(User.id == id_).options(*_EAGER_OPTIONS))
+        """Overrides BaseRepository.get_by_id to eager-load role/department/
+        company - role/department for UserResponse, company so
+        get_current_active_user can check current_user.company.is_active on
+        every request without a lazy-load - and to apply company scoping
+        only when this instance was constructed with one (see class
+        docstring)."""
+        return self.db.scalar(
+            self._scope(select(User).where(User.id == id_)).options(*_EAGER_OPTIONS)
+        )
 
     def get_by_email(self, email: str) -> User | None:
         """Case-insensitive lookup, since email is a login identifier."""
         return self.db.scalar(
-            select(User).where(func.lower(User.email) == email.strip().lower())
+            self._scope(select(User).where(func.lower(User.email) == email.strip().lower()))
         )
 
     def get_by_username(self, username: str) -> User | None:
         """Case-insensitive lookup by username."""
         return self.db.scalar(
-            select(User).where(func.lower(User.username) == username.strip().lower())
+            self._scope(
+                select(User).where(func.lower(User.username) == username.strip().lower())
+            )
         )
 
-    def get_by_username_or_email(self, identifier: str) -> User | None:
-        """Case-insensitive lookup matching either username or email.
+    def get_by_username_or_email(self, identifier: str, company_id: int) -> User | None:
+        """Case-insensitive lookup matching either username or email, scoped
+        to one company by an explicit parameter rather than this
+        repository's own construction-time company_id.
 
         Lets ``username`` remain the one documented login field while still
         accepting an email address, without adding a second login field.
+
+        The company_id is required here (unlike this class's other methods,
+        which fall back to construction-time scoping) because
+        AuthService.login resolves the company fresh on every call from the
+        request's company_code, not once when the repository is built -
+        username/email are only unique *within* a company
+        (UNIQUE(company_id, username/email)), so an unscoped lookup here
+        would be ambiguous the moment two companies share a username.
         """
         normalized = identifier.strip().lower()
         return self.db.scalar(
             select(User).where(
+                User.company_id == company_id,
                 or_(
                     func.lower(User.username) == normalized,
                     func.lower(User.email) == normalized,
-                )
+                ),
             )
         )
 
@@ -54,7 +100,7 @@ class UserRepository(BaseRepository[User]):
         is_active: bool | None,
         search: str | None,
     ):
-        stmt = select(User).options(*_EAGER_OPTIONS)
+        stmt = self._scope(select(User)).options(*_EAGER_OPTIONS)
         if role_id is not None:
             stmt = stmt.where(User.role_id == role_id)
         if department_id is not None:
@@ -106,3 +152,47 @@ class UserRepository(BaseRepository[User]):
             role_id=role_id, department_id=department_id, is_active=is_active, search=search
         )
         return self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+
+    def get_platform_administrator(self, identifier: str) -> User | None:
+        """The one lookup scoped to company_id IS NULL - resolves only the
+        single platform-level System Administrator account, never a tenant
+        user (Milestone 8, Phase 8.3). Deliberately a dedicated method
+        rather than reusing get_by_username()/get_by_email() (both fall
+        back to this instance's own construction-time company_id, or
+        search *every* tenant when unscoped - see this class's own
+        docstring) or get_by_username_or_email() (which requires a
+        specific company_id): none of those can express "only the
+        company-less account" safely, and reusing one of them for platform
+        login would let a same-named tenant user's credentials match.
+        Matches either username or email, case-insensitively, same
+        convention as get_by_username_or_email. Used by both
+        AuthService.authenticate_platform_administrator (login) and
+        seed_initial_data._seed_platform_administrator (idempotency
+        check) - always call this on an unscoped UserRepository(db),
+        though this method ignores self.company_id/_scope() entirely
+        regardless, the same way count_all_tenant_users does.
+        """
+        normalized = identifier.strip().lower()
+        return self.db.scalar(
+            select(User)
+            .where(
+                User.company_id.is_(None),
+                or_(
+                    func.lower(User.username) == normalized,
+                    func.lower(User.email) == normalized,
+                ),
+            )
+            .options(*_EAGER_OPTIONS)
+        )
+
+    def count_all_tenant_users(self) -> int:
+        """Platform-only cross-tenant aggregate (Milestone 8, Phase 8.1):
+        every user that belongs to a company, across every company at once -
+        deliberately ignores this repository's own construction-time
+        company_id/_scope() entirely (call this on an unscoped
+        UserRepository(db), the same instance get_current_user resolves
+        identity through). Excludes the single System Administrator account
+        (company_id IS NULL), which is a platform-level user, not a tenant
+        one - see PlatformService.get_overview."""
+        stmt = select(func.count()).select_from(User).where(User.company_id.isnot(None))
+        return self.db.scalar(stmt) or 0

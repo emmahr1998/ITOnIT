@@ -238,7 +238,9 @@ def test_create_department_translates_integrity_error_to_conflict() -> None:
         def create(self, obj: Department) -> Department:
             raise IntegrityError("insert", {}, Exception("unique constraint"))
 
-    service = DepartmentService(db=FakeSession(), department_repository=RaisingRepository())
+    service = DepartmentService(
+        db=FakeSession(), company_id=1, department_repository=RaisingRepository()
+    )
 
     with pytest.raises(DepartmentTitleConflictError):
         service.create_department(DepartmentCreate(title="Finance"))
