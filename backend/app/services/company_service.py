@@ -1,3 +1,4 @@
+import logging
 import secrets
 from collections.abc import Callable
 from pathlib import Path
@@ -23,7 +24,10 @@ from app.repositories.priority import PriorityRepository
 from app.repositories.role import RoleRepository
 from app.repositories.user import UserRepository
 from app.schemas.company import CompanyRegisterRequest, CompanyUpdateRequest
+from app.services.email_service import SmtpEmailService
 from app.services.storage_service import StorageService
+
+logger = logging.getLogger(__name__)
 
 # Same allowlist rationale as AttachmentService's _ALLOWED_EXTENSIONS, scoped
 # to images only - a logo is a brand image, not a general file upload. SVG
@@ -146,6 +150,7 @@ class CompanyService:
         company_repository: CompanyRepository | None = None,
         role_repository: RoleRepository | None = None,
         storage_service: StorageService | None = None,
+        email_service: SmtpEmailService | None = None,
         user_repository_factory: Callable[[int], UserRepository] | None = None,
         priority_repository_factory: Callable[[int], PriorityRepository] | None = None,
         category_repository_factory: Callable[[int], CategoryRepository] | None = None,
@@ -163,6 +168,7 @@ class CompanyService:
             if storage_service is not None
             else StorageService(settings.LOGO_STORAGE_PATH)
         )
+        self._email_service = email_service if email_service is not None else SmtpEmailService()
         self._user_repository_factory = user_repository_factory or (
             lambda company_id: UserRepository(db, company_id)
         )
@@ -183,7 +189,11 @@ class CompanyService:
         )
 
     def register_company(
-        self, payload: CompanyRegisterRequest, company_code: str | None = None
+        self,
+        payload: CompanyRegisterRequest,
+        company_code: str | None = None,
+        *,
+        send_welcome_email: bool = False,
     ) -> User:
         """Create a new company, its first Company Administrator, and
         starter company data, all in one transaction - nothing is
@@ -208,6 +218,17 @@ class CompanyService:
         _generate_unique_company_code, which does its own uniqueness
         pre-check internally; when supplied, it's pre-checked below
         instead.
+
+        send_welcome_email is keyword-only and defaults to False
+        deliberately: the "here's your company code" email is specific to
+        PUBLIC self-registration (POST /companies/register passes True
+        explicitly), not a general consequence of this method. System
+        Administrator provisioning (PlatformService.create_company) calls
+        this method too but never passes it, so it never sends this email -
+        an explicit opt-in per call site, not a flag this method defaults
+        to true for and platform provisioning has to remember to suppress.
+        See _send_welcome_email_best_effort for how a delivery failure here
+        is isolated from the registration result.
 
         Returns the newly created Company Administrator (already
         committed); the route issues tokens for it via
@@ -269,6 +290,9 @@ class CompanyService:
             # why username/email can't conflict for a brand new company).
             self._db.rollback()
             raise CompanyCodeConflictError from exc
+
+        if send_welcome_email:
+            self._send_welcome_email_best_effort(admin.email, company.name, company_code)
 
         return admin
 
@@ -383,6 +407,40 @@ class CompanyService:
             "Could not generate a unique company code after "
             f"{_COMPANY_CODE_MAX_GENERATION_ATTEMPTS} attempts"
         )
+
+    def _send_welcome_email_best_effort(
+        self, to_email: str, company_name: str, company_code: str
+    ) -> None:
+        """Called only from register_company, only after self._db.commit()
+        has already succeeded - there is nothing left to roll back by the
+        time this runs, so a delivery failure here can never affect
+        whether registration succeeded. "Not configured" and "configured
+        but failed to send" are treated as distinct, deliberately: the
+        former is a normal deployment state (see
+        SmtpEmailService.is_configured's own docstring) logged at info
+        level with no exception involved at all; the latter is an actual
+        failure - still never raised further, by design (see
+        SmtpEmailService's own docstring on why it raises rather than
+        swallowing: that's this method's job, specifically, not its own).
+        """
+        if not self._email_service.is_configured:
+            logger.info(
+                "SMTP not configured - skipping registration welcome email to %s",
+                to_email,
+            )
+            return
+        try:
+            self._email_service.send_company_registered_email(
+                to_email, company_name, company_code
+            )
+        except Exception:
+            # Never let a delivery failure surface past this method - see
+            # the docstring above. The stack trace goes to the log, never
+            # to the HTTP response (no SMTP detail of any kind reaches the
+            # caller of register_company).
+            logger.warning(
+                "Failed to send registration welcome email to %s", to_email, exc_info=True
+            )
 
     def _seed_defaults(self, company_id: int) -> None:
         priority_repository = self._priority_repository_factory(company_id)

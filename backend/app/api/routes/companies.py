@@ -56,11 +56,19 @@ def register_company(
     (format "IT-XXXXXX"); the response includes it, so the new Company
     Administrator can see/share it immediately.
 
+    send_welcome_email=True is this route's own explicit opt-in to
+    CompanyService.register_company sending the "here's your company
+    code" email - the one call site in the whole app that passes it, since
+    this behavior is specific to public self-registration (see that
+    parameter's own docstring). A delivery failure never affects this
+    response: it's caught and logged entirely inside register_company,
+    after its transaction already committed.
+
     Replaces the old POST /auth/register self-registration flow, which
     always created a bare, company-less Employee account.
     """
     try:
-        admin = company_service.register_company(payload)
+        admin = company_service.register_company(payload, send_welcome_email=True)
     except CompanyCodeConflictError as exc:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "A company with this company code already exists"

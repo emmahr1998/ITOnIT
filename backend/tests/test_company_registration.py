@@ -7,6 +7,7 @@ registration flow this replaces is covered separately in
 test_auth.py::test_old_self_registration_endpoint_no_longer_exists.
 """
 
+import inspect
 import re
 from unittest.mock import patch
 
@@ -20,7 +21,8 @@ from app.models.role import Role
 from app.models.user import User
 from app.schemas.company import CompanyRegisterRequest, PlatformCompanyRegisterRequest
 from app.services.company_service import CompanyCodeConflictError, CompanyService
-from tests.conftest import COMPANY_A_CODE, FakeCompanyRepository
+from app.services.email_service import SmtpEmailService
+from tests.conftest import COMPANY_A_CODE, FakeCompanyRepository, FakeEmailService
 
 # Mirrors CompanyService's own generated-code shape: "IT-" + 6 characters
 # from its alphabet (digits/uppercase letters, excluding 0/O/1/I).
@@ -701,3 +703,120 @@ def test_register_company_missing_role_raises_before_creating_anything(
         service.register_company(payload, company_code="NOROLESE")
 
     assert company_repository.get_by_code("NOROLESE") is None
+
+
+# ---------------------------------------------------------------------------
+# Public-registration welcome email (the generated company code, sent to
+# the new Company Administrator's email address) - see
+# app/services/email_service.py and
+# CompanyService._send_welcome_email_best_effort. Every test below uses
+# FakeEmailService (see conftest.py's client fixture, which wires it into
+# the same CompanyService instance both POST /companies/register and POST
+# /platform/companies use) - no test anywhere in this suite ever opens a
+# real SMTP connection.
+# ---------------------------------------------------------------------------
+
+
+def test_register_company_sends_exactly_one_welcome_email_to_the_admin(
+    client: TestClient, email_service: FakeEmailService
+) -> None:
+    """Covers: triggers exactly one email, to the correct recipient,
+    with the correct company name and the exact generated code the
+    registration response itself returned."""
+    response = _register(client, username="welcomeemailadmin", email="welcomeemail@example.com")
+    assert response.status_code == 201, response.text
+    generated_code = response.json()["company_code"]
+
+    assert len(email_service.sent) == 1
+    to_email, company_name, company_code = email_service.sent[0]
+    assert to_email == "welcomeemail@example.com"
+    assert company_name == "Acme Corp"
+    assert company_code == generated_code
+
+
+def test_welcome_email_signature_has_no_password_or_token_parameters() -> None:
+    """Structural guarantee, not just behavioral: send_company_registered_email
+    has no password/token parameter at all - no code path anywhere could
+    pass one through even by accident."""
+    sig = inspect.signature(SmtpEmailService.send_company_registered_email)
+    assert set(sig.parameters) - {"self"} == {"to_email", "company_name", "company_code"}
+
+
+def test_register_company_welcome_email_contains_no_password_or_tokens(
+    client: TestClient, email_service: FakeEmailService
+) -> None:
+    response = _register(
+        client,
+        username="emailsecretcheck",
+        email="emailsecretcheck@example.com",
+        password="SuperSecret1!",
+    )
+    assert response.status_code == 201
+    body = response.json()
+    access, refresh = body["access"], body["refresh"]
+
+    assert len(email_service.sent) == 1
+    for value in email_service.sent[0]:
+        assert "SuperSecret1!" not in value
+        assert access not in value
+        assert refresh not in value
+
+
+def test_register_company_email_delivery_failure_does_not_fail_registration(
+    client: TestClient, email_service: FakeEmailService
+) -> None:
+    """Covers: email-service failure does not fail registration, and
+    afterward the company still exists and its generated code still works
+    for login - registration is fully unaffected by the simulated SMTP
+    failure."""
+    email_service.fail_next_send = True
+
+    response = _register(client, username="emailfailadmin", email="emailfail@example.com")
+    assert response.status_code == 201, response.text
+    code = response.json()["company_code"]
+
+    login = client.post(
+        "/auth/login",
+        json={"company_code": code, "username": "emailfailadmin", "password": "SuperSecret1!"},
+    )
+    assert login.status_code == 200
+
+
+def test_register_company_succeeds_when_smtp_not_configured(
+    client: TestClient, email_service: FakeEmailService
+) -> None:
+    """"Not configured" (e.g. a fresh local .env with no SMTP section) must
+    never crash or block registration - sending is simply skipped."""
+    email_service.is_configured = False
+
+    response = _register(client, username="nosmtpadmin", email="nosmtp@example.com")
+    assert response.status_code == 201, response.text
+    assert email_service.sent == []
+
+
+def test_platform_provisioning_does_not_send_public_registration_email(
+    client: TestClient,
+    auth_headers,
+    active_system_administrator_user,
+    email_service: FakeEmailService,
+) -> None:
+    """System Administrator provisioning (POST /platform/companies) shares
+    CompanyService.register_company with public self-registration, but
+    never passes send_welcome_email=True - this welcome email is specific
+    to public registration, not a general consequence of company
+    creation."""
+    response = client.post(
+        "/platform/companies",
+        json={
+            "company_name": "No Email Co",
+            "company_code": "NOEMAIL1",
+            "first_name": "Pat",
+            "last_name": "Admin",
+            "username": "noemailadmin",
+            "email": "noemail@example.com",
+            "password": "SuperSecret1!",
+        },
+        headers=auth_headers(active_system_administrator_user),
+    )
+    assert response.status_code == 201, response.text
+    assert email_service.sent == []
