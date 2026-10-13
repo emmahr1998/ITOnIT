@@ -5,6 +5,10 @@ import { ProtectedRoute } from "../auth/ProtectedRoute";
 import { PlatformProtectedRoute } from "../auth/PlatformProtectedRoute";
 import { DashboardPage } from "../pages/DashboardPage";
 import { LandingPage } from "../pages/LandingPage";
+import { FeaturesPage } from "../pages/FeaturesPage";
+import { HowItWorksPage } from "../pages/HowItWorksPage";
+import { RolesPage } from "../pages/RolesPage";
+import { HelpCenterPage } from "../pages/HelpCenterPage";
 import { LoginPage } from "../pages/LoginPage";
 import { RegisterPage } from "../pages/RegisterPage";
 import { TicketListPage } from "../pages/TicketListPage";
@@ -42,6 +46,10 @@ export function AppRouter() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={IS_DESKTOP ? <Navigate to="/login" replace /> : <LandingPage />} />
+        <Route path="/features" element={<FeaturesPage />} />
+        <Route path="/how-it-works" element={<HowItWorksPage />} />
+        <Route path="/roles" element={<RolesPage />} />
+        <Route path="/help" element={<HelpCenterPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/platform/login" element={<PlatformLoginPage />} />

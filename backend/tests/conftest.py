@@ -22,6 +22,7 @@ from app.dependencies.inventory_transaction import get_inventory_transaction_ser
 from app.dependencies.location import get_location_service
 from app.dependencies.platform import get_platform_service
 from app.dependencies.priority import get_priority_service
+from app.dependencies.support import get_support_service
 from app.dependencies.ticket import get_ticket_service
 from app.dependencies.ticket_inventory import get_ticket_inventory_service
 from app.dependencies.user import get_user_service
@@ -62,6 +63,7 @@ from app.services.inventory_transaction_service import InventoryTransactionServi
 from app.services.location_service import LocationService
 from app.services.platform_service import PlatformService
 from app.services.priority_service import PriorityService
+from app.services.support_service import SupportService
 from app.services.ticket_inventory_service import TicketInventoryService
 from app.services.ticket_service import TicketService
 from app.services.user_service import UserService
@@ -1275,13 +1277,14 @@ class FakeEmailService:
     records calls. Same rationale as FakeStorageService: the test suite
     must never reach real SMTP code, not merely avoid calling it by
     convention - this fake is the only EmailService implementation any
-    client fixture ever wires into CompanyService (see the client fixture
-    below), so a real smtplib.SMTP(...) connection is structurally
-    unreachable from any test.
+    client fixture ever wires into CompanyService/SupportService (see the
+    client fixture below), so a real smtplib.SMTP(...) connection is
+    structurally unreachable from any test.
     """
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, str, str]] = []
+        self.support_sent: list[tuple[str, str, str, str, str]] = []
         self.is_configured = True
         self.fail_next_send = False
 
@@ -1292,6 +1295,19 @@ class FakeEmailService:
             self.fail_next_send = False
             raise RuntimeError("simulated SMTP failure")
         self.sent.append((to_email, company_name, company_code))
+
+    def send_support_contact_email(
+        self,
+        to_email: str,
+        sender_name: str,
+        sender_email: str,
+        subject: str,
+        message_body: str,
+    ) -> None:
+        if self.fail_next_send:
+            self.fail_next_send = False
+            raise RuntimeError("simulated SMTP failure")
+        self.support_sent.append((to_email, sender_name, sender_email, subject, message_body))
 
 
 class FakeSession:
@@ -2158,6 +2174,19 @@ def email_service() -> FakeEmailService:
     return FakeEmailService()
 
 
+# Fixed, test-only destination - SupportService.send_contact_message treats
+# a missing/blank support_email as "not configured" (see its own
+# docstring), so this fixture always supplies one; tests that specifically
+# want the "not configured" path construct their own SupportService with
+# support_email=None instead of using this fixture's email_service.
+TEST_SUPPORT_EMAIL = "support-test@example.com"
+
+
+@pytest.fixture
+def support_service(email_service: FakeEmailService) -> SupportService:
+    return SupportService(email_service=email_service, support_email=TEST_SUPPORT_EMAIL)
+
+
 @pytest.fixture
 def attachment_repository(
     employee_attachment: Attachment,
@@ -2201,6 +2230,7 @@ def client(
     attachment_repository: FakeAttachmentRepository,
     storage_service: FakeStorageService,
     email_service: FakeEmailService,
+    support_service: SupportService,
 ) -> Iterator[TestClient]:
     # The dependency-override functions below each take their own
     # `company_id: int = Depends(get_current_company_id)`, resolved fresh
@@ -2475,6 +2505,7 @@ def client(
     app.dependency_overrides[get_history_service] = _history_service
     app.dependency_overrides[get_attachment_service] = _attachment_service
     app.dependency_overrides[get_platform_service] = _platform_service
+    app.dependency_overrides[get_support_service] = lambda: support_service
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

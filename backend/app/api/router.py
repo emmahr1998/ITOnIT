@@ -14,6 +14,7 @@ from app.api.routes import (
     locations,
     platform,
     priorities,
+    support,
     tickets,
     users,
 )
@@ -35,3 +36,4 @@ api_router.include_router(tickets.flat_router)
 api_router.include_router(tickets.router)
 api_router.include_router(attachments.router)
 api_router.include_router(platform.router)
+api_router.include_router(support.router)
