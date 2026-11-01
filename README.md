@@ -1,115 +1,288 @@
 # ITOnIT
 
-ITOnIT is a full-stack IT management system developed as a Computer Science final project.
+### One platform. Every IT request, asset, and team — connected.
 
-The idea behind the project is to make everyday IT operations easier to manage. Instead of handling support requests through emails, messages, and spreadsheets, ITOnIT provides one place where employees can report problems, technicians can manage their assigned work, and administrators can oversee the organization's IT operations.
+**ITOnIT is a full-stack IT service management platform that brings ticketing, equipment inventory, and organizational administration together in one place.**
 
-The system includes ticket management, IT inventory tracking, user management, and reporting. It also supports multiple organizations, with each company having its own users, tickets, and inventory.
+Built with React, TypeScript, FastAPI, and SQL Server, ITOnIT supports multiple organizations, role-based access, and both web and Windows desktop clients.
 
-ITOnIT is available as both a web application and a Windows desktop application.
+<p align="center">
+  <a href="https://itonit.netlify.app"><strong>🌐 Explore the Live Application</strong></a>
+</p>
 
-## Main Features
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
+  <img src="https://img.shields.io/badge/TypeScript-Frontend-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/SQL%20Server-Database-CC2927" alt="SQL Server">
+  <img src="https://img.shields.io/badge/Electron-Desktop-47848F?logo=electron&logoColor=white" alt="Electron">
+</p>
 
-### Ticket Management
-- Create and manage IT support tickets.
+---
+
+## The Idea Behind ITOnIT
+
+IT support should be straightforward. An employee reports a problem, the right technician takes responsibility, and everyone involved knows what's happening.
+
+In practice, it's rarely that simple.
+
+Requests arrive through emails and messages, equipment records live in spreadsheets, and important updates get lost between conversations. As an organization grows, keeping track of everything becomes increasingly difficult.
+
+**ITOnIT was built to bring those pieces together.**
+
+Instead of treating support tickets, hardware inventory, and employee management as separate systems, ITOnIT connects them into a single workflow.
+
+An employee can report an issue. A technician can manage the request, assign equipment, and document the resolution. An administrator can oversee the team's workload, manage users, and keep track of company resources.
+
+And because the platform supports multiple organizations, each company can work within its own secure environment without needing a separate installation.
+
+What began as a Computer Science final project became an opportunity to design and build an application that addresses a real operational problem.
+
+---
+
+## What Can ITOnIT Do?
+
+###  IT Service Desk
+
+A centralized place to manage IT requests from the moment they're submitted until they're resolved.
+
+- Create, assign, prioritize, and manage support tickets.
+- Track requests through their full lifecycle.
+- Organize tickets by category, priority, and location.
 - Assign tickets to technicians.
-- Track ticket status, priority, and category.
-- Add comments and file attachments.
-- View ticket history and changes.
-- Filter and search tickets.
+- Add comments and supporting attachments.
+- Maintain a detailed history of ticket activity.
+- Give employees visibility into the progress of their requests.
 
-### Inventory Management
-- Manage IT equipment and stock.
-- Track individual assets and bulk inventory.
-- Assign and reserve equipment for support tickets.
-- Record inventory transactions.
-- Monitor available quantities, low stock, and warranty information.
+Every ticket has a clear status, an owner, and a record of what happened along the way.
 
-### Users and Permissions
+###  Inventory & Equipment Management
 
-ITOnIT uses role-based access control (RBAC). Each user has access to the features relevant to their responsibilities.
+ITOnIT doesn't stop at support tickets. It also helps teams manage the equipment involved in resolving them.
+
+The system supports two inventory models:
+
+| Serialized Assets | Bulk Inventory |
+|---|---|
+| Individually tracked equipment | Quantity-based stock |
+| Laptops, monitors, and similar devices | Cables, mice, and other supplies |
+| Unique asset identification | Stock quantity management |
+| Individual equipment records | Reserve, consume, and release operations |
+
+Inventory can be connected directly to tickets, making it possible to track equipment usage as part of the support process.
+
+The platform also maintains inventory transaction history and supports low-stock and warranty-related monitoring.
+
+###  Users, Roles & Permissions
+
+Different people need different levels of access.
+
+ITOnIT provides four distinct roles:
 
 | Role | Responsibilities |
 |---|---|
-| Employee | Create tickets and follow their progress |
-| Technician | Manage assigned tickets, update statuses, and work with inventory |
-| Company Administrator | Manage users, tickets, inventory, and company settings |
-| System Administrator | Manage organizations through a separate platform administration interface |
+| **Employee** | Submit requests, follow their progress, and communicate with support |
+| **Technician** | Handle assigned tickets, update statuses, and work with inventory |
+| **Company Administrator** | Manage company users, settings, resources, and support operations |
+| **System Administrator** | Manage the organizations registered on the platform |
 
-### Multi-Company Support
+Permissions are enforced by the backend, not just by hiding buttons in the interface.
 
-ITOnIT was designed to support multiple organizations using the same application.
+This distinction is important: users can only perform actions their roles actually allow, even when accessing the API directly.
 
-Each company has its own workspace, and data is separated between organizations. Users can only access information belonging to their company, according to their permissions.
+###  Multi-Organization Support
 
-### Dashboard and Reports
+ITOnIT was designed to support more than one company.
 
-The application provides dashboards with information such as ticket status, priorities, assigned work, and inventory statistics.
+Organizations can register through the public website and receive a unique company code. Their users, tickets, inventory, and settings belong to their own organizational environment.
 
-The information displayed depends on the user's role.
+The platform includes:
 
-### Web and Desktop Applications
+- Self-service company registration.
+- Unique company identification codes.
+- Organization-specific users and data.
+- Company-level administration.
+- A separate platform administration area.
+- Company activation and suspension controls.
 
-The frontend is built with React and TypeScript.
+**One application can serve multiple organizations while keeping their data separated.**
 
-The desktop version uses Electron and shares the same frontend, allowing users to access ITOnIT through a Windows application.
+###  Dashboards & Operational Visibility
 
-Both versions communicate with the FastAPI backend.
+ITOnIT turns everyday support activity into information that administrators and technicians can use.
 
-## Technologies
+Its dashboards provide visibility into ticket volumes, statuses, priorities, categories, historical trends, and inventory activity.
 
-| Component | Technology |
-|---|---|
-| Backend | Python, FastAPI |
-| Frontend | React, TypeScript |
-| Database | Microsoft SQL Server |
-| ORM | SQLAlchemy |
-| Database Migrations | Alembic |
-| Authentication | JWT, Argon2 |
-| Desktop Application | Electron |
-| API Communication | REST API, Axios |
-| Frontend Build Tool | Vite |
-| Testing | Pytest |
-| Version Control | Git, GitHub |
+Dashboard content is adapted to the user's role, helping each person focus on the information relevant to their work.
 
-## Project Structure
+###  Web & Windows Desktop
 
-```text
-ITOnIT/
-├── backend/             FastAPI application
-│   ├── app/
-│   │   ├── api/         API endpoints
-│   │   ├── models/      Database models
-│   │   ├── schemas/     Request and response schemas
-│   │   ├── services/    Business logic
-│   │   ├── repositories/
-│   │   └── core/        Configuration and security
-│   ├── alembic/         Database migrations
-│   └── tests/           Backend tests
-│
-├── frontend/            React and TypeScript application
-│   └── src/
-│       ├── api/
-│       ├── components/
-│       ├── pages/
-│       ├── auth/
-│       └── styles/
-│
-├── desktop/             Electron desktop application
-│
-└── docs/                Project documentation
+ITOnIT is available as a browser-based application and has an Electron-based Windows desktop client.
+
+Both use the same React and TypeScript frontend and communicate with the same FastAPI backend.
+
+This means the application can provide a consistent experience across clients without maintaining two separate frontend implementations.
+
+---
+
+## System Architecture
+
+ITOnIT follows a layered client-server architecture.
+
+The frontend is responsible for the user experience, while the backend handles authentication, permissions, business rules, and database operations.
+
+```mermaid
+flowchart TB
+    WEB["Web Application<br/>React + TypeScript"]
+    DESKTOP["Windows Desktop<br/>Electron + React"]
+
+    API["FastAPI REST API"]
+
+    AUTH["Authentication & Authorization<br/>JWT · RBAC · Tenant Isolation"]
+
+    SERVICES["Service Layer<br/>Business Logic & Workflows"]
+
+    REPOS["Repository Layer<br/>SQLAlchemy"]
+
+    DB[("Microsoft SQL Server")]
+
+    WEB --> API
+    DESKTOP --> API
+    API --> AUTH
+    AUTH --> SERVICES
+    SERVICES --> REPOS
+    REPOS --> DB
 ```
+
+### How a Request Moves Through the System
+
+When a technician updates a ticket, the request passes through several layers:
+
+1. The React application sends an authenticated API request.
+2. FastAPI validates the request and identifies the user.
+3. The authorization layer verifies the user's role and organization.
+4. The service layer applies the relevant business rules.
+5. The repository layer performs the database operations.
+6. Ticket history is updated, and the result is returned to the frontend.
+
+This separation makes the application easier to test, maintain, and extend.
+
+Rather than putting database queries and business rules directly inside API endpoints, each layer has a defined responsibility.
+
+---
+
+## Technology Stack
+
+| Area | Technologies |
+|---|---|
+| **Frontend** | React 19, TypeScript, Vite, React Router |
+| **Desktop** | Electron, electron-builder |
+| **Backend** | Python 3.12, FastAPI, Pydantic |
+| **Database** | Microsoft SQL Server, SQLAlchemy |
+| **Migrations** | Alembic |
+| **Authentication** | JWT access and refresh tokens, Argon2 |
+| **API Communication** | REST, Axios |
+| **Testing** | pytest |
+| **Code Quality** | Ruff, TypeScript strict mode, frontend linting |
+| **Version Control** | Git, GitHub |
+| **Web Deployment** | Netlify, Cloudflare Tunnel |
+
+### Why This Stack?
+
+**React and TypeScript** provide a reusable, component-based interface with compile-time type checking.
+
+**FastAPI** offers a structured Python backend with request validation, dependency injection, and automatically generated API documentation.
+
+**SQLAlchemy and SQL Server** support relational data modeling, database constraints, and the relationships required for tickets, users, inventory, and organizational data.
+
+**Alembic** manages database schema changes through version-controlled migrations.
+
+**Electron** allows the existing web interface to run as a Windows desktop application without rebuilding the entire frontend.
+
+The goal was not simply to combine popular technologies, but to choose tools that work together in a maintainable architecture.
+
+---
+
+## Security & Data Isolation
+
+Security is an important part of ITOnIT's design, especially because the platform serves multiple organizations.
+
+### Authentication
+
+ITOnIT uses JWT-based authentication with separate access and refresh tokens.
+
+Passwords are stored using Argon2 hashing rather than plaintext.
+
+### Role-Based Access Control
+
+The backend validates permissions for protected operations. Frontend restrictions improve the user experience, but they are not treated as a security boundary.
+
+### Organization Isolation
+
+Organization-specific data access is handled through company-scoped repositories.
+
+The organization context is derived from the authenticated user rather than trusted directly from client input.
+
+This helps prevent users from accessing another company's tickets, equipment, or administrative records.
+
+### Platform Administration
+
+System Administrator access is separated from ordinary company administration.
+
+The backend requires the appropriate role, administrator flag, and membership in the dedicated platform organization. Database-level constraints provide additional protection against duplicate platform administrators.
+
+### Auditability
+
+Ticket changes and inventory transactions are recorded so that important actions remain traceable.
+
+**The guiding principle is simple: access should be explicit, organizational boundaries should be enforced, and important actions should leave a record.**
+
+---
+
+## Testing & Engineering Quality
+
+ITOnIT includes an extensive backend test suite covering the application's main services, business rules, and permission boundaries.
+
+The current repository contains **784 backend tests**. Running the full suite locally, **782 pass out of the box**; the remaining 2 are sensitive to local environment configuration rather than indicating application bugs — they assume the Help Center's `SUPPORT_EMAIL` setting is unset, which it intentionally isn't in an environment where that contact form is live. The underlying feature behaves correctly either way; this is a test-fixture detail being cleaned up, not a defect in the shipped code.
+
+Testing covers areas such as:
+
+- Authentication and token handling.
+- User roles and authorization.
+- Organization data isolation.
+- Ticket creation and lifecycle operations.
+- Comments and attachments.
+- Inventory management and transactions.
+- Company and platform administration.
+- Business rules and error handling.
+
+The backend uses dependency injection and test doubles to validate business logic without requiring every unit test to connect to a real database.
+
+In addition to automated tests, the application has been exercised through end-to-end workflows using a separate rehearsal database.
+
+This separation allows workflows to be tested without modifying the live demonstration data.
+
+### Known Limitations
+
+ITOnIT is a working academic project, not a claim of a fully production-hardened commercial service.
+
+Some capabilities remain outside the current version, including multi-factor authentication, login rate limiting, server-side token revocation, and automatic desktop updates.
+
+These limitations are documented as part of the project's technical debt and future development opportunities.
+
+---
 
 ## Getting Started
 
-### Requirements
+### Prerequisites
 
-Before running the project, make sure you have:
+To run ITOnIT locally, you will need:
 
-- Python 3.12 or newer
-- Node.js 20 or newer
-- Microsoft SQL Server (Express is supported)
-- Microsoft ODBC Driver for SQL Server
+- Python 3.12+
+- Node.js 20+
+- Microsoft SQL Server or SQL Server Express
+- A compatible SQL Server ODBC driver
 - Git
 
 ### 1. Clone the Repository
@@ -119,40 +292,37 @@ git clone https://github.com/emmahr1998/ITOnIT.git
 cd ITOnIT
 ```
 
-### 2. Backend Setup
-
-Open a terminal in the backend directory:
+### 2. Configure the Backend
 
 ```bash
 cd backend
+
 python -m venv .venv
 ```
 
 Activate the virtual environment.
 
-Windows:
+**Windows:**
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+.venv\Scripts\activate
 ```
 
-Install dependencies:
+**macOS / Linux:**
+
+```bash
+source .venv/bin/activate
+```
+
+Install the dependencies:
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-Create a `.env` file based on `.env.example` and configure your database connection and application settings.
+Create a local `.env` file based on `.env.example`.
 
-Make sure SQL Server is running and the database exists before applying migrations.
-
-### 3. Database Setup
-
-Create the database in SQL Server:
-
-```sql
-CREATE DATABASE ITOnIT;
-```
+Configure the database connection and generate your own secure, random `SECRET_KEY`. Never use the example signing key in a public deployment.
 
 Apply the database migrations:
 
@@ -160,99 +330,50 @@ Apply the database migrations:
 python -m alembic upgrade head
 ```
 
-For initial setup, the project also includes a seed script:
+Initialize the reference data:
 
 ```bash
 python -m app.scripts.seed_initial_data
 ```
 
-**Note:** Apply migrations only to a database you intend to initialize or update. For an existing database, review the migration history and any required data-repair steps first.
-
-### 4. Run the Backend
-
-From the `backend` directory:
+Start the API:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-The API will be available at:
+The backend will be available at:
 
-`http://127.0.0.1:8000`
+- API: `http://127.0.0.1:8000`
+- Swagger documentation: `http://127.0.0.1:8000/docs`
 
-FastAPI also provides interactive API documentation through Swagger:
+### 3. Start the Frontend
 
-`http://127.0.0.1:8000/docs`
-
-### 5. Frontend Setup
-
-Open another terminal:
+Open another terminal from the project root:
 
 ```bash
 cd frontend
 npm install
-```
-
-Configure the backend URL in your frontend environment:
-
-```env
-VITE_API_BASE_URL=http://localhost:8000
-```
-
-Start the development server:
-
-```bash
 npm run dev
 ```
 
-Open:
+The frontend will be available at:
 
 `http://localhost:5173`
 
-## Desktop Application
+By default, the frontend talks to `http://localhost:8000` (set via `VITE_API_BASE_URL` in `frontend/.env.development`). Change that value if your backend runs somewhere else.
 
-The Windows desktop application is built with Electron and uses the same React frontend.
+### 4. Run the Tests
 
-To run it in development mode, first start the backend.
-
-From the `frontend` directory:
+Backend:
 
 ```bash
-npm run dev:desktop
-```
-
-Then open another terminal in the `desktop` directory:
-
-```bash
-npm install
-npm run dev
-```
-
-To build the Windows application:
-
-```bash
-npm run dist
-```
-
-The desktop application requires a running backend and database connection. They are not included in the Electron installer.
-
-## Testing
-
-The backend uses Pytest for automated testing.
-
-Run the tests from the `backend` directory:
-
-```bash
+cd backend
 pytest
-```
-
-Check backend code quality:
-
-```bash
 ruff check app tests scripts
 ```
 
-For frontend checks, run:
+Frontend:
 
 ```bash
 cd frontend
@@ -261,40 +382,143 @@ npm run lint
 npm run build
 ```
 
-## Security
+For more detailed setup and architecture information, see the documentation in the `docs/` directory.
 
-The project includes several security measures:
+---
 
-- JWT-based authentication with access and refresh tokens.
-- Password hashing using Argon2.
-- Role-based permissions.
-- Company-level data isolation.
-- Protected API endpoints.
-- Separate platform administration.
-- Input validation using Pydantic.
+## Windows Desktop Application
 
-These measures are intended to restrict access to the appropriate users and organizations.
+The desktop client is built with Electron and reuses the React frontend.
+
+To build it from source:
+
+```bash
+cd frontend
+npm install
+npm run build:desktop
+```
+
+Then:
+
+```bash
+cd ../desktop
+npm install
+npm run dist
+```
+
+The desktop application connects to an external ITOnIT backend. It does not bundle its own SQL Server database or FastAPI service.
+
+The current desktop build is unsigned and does not include automatic updates. A public installer download is not yet provided through GitHub Releases.
+
+---
+
+## Live Demo & Deployment
+
+**Live application:** https://itonit.netlify.app
+
+The public demonstration uses the following setup:
+
+```mermaid
+flowchart LR
+    USER["Browser"]
+    NETLIFY["Netlify<br/>React Frontend"]
+    TUNNEL["Cloudflare<br/>HTTPS Tunnel"]
+    API["Local FastAPI<br/>Backend"]
+    DB[("Local SQL Server")]
+
+    USER --> NETLIFY
+    NETLIFY --> TUNNEL
+    TUNNEL --> API
+    API --> DB
+```
+
+The frontend is hosted on Netlify, while the backend and database run on the development machine and are connected through a temporary Cloudflare Tunnel.
+
+This setup makes it possible to demonstrate the complete application over the internet without maintaining a permanent cloud backend.
+
+**Demo availability:** The backend must be running and connected for authenticated functionality to work. The public tunnel address may change when restarted.
+
+This is the project's demonstration environment, rather than a permanent production hosting arrangement.
+
+---
+
+## Project Structure
+
+```text
+ITOnIT/
+│
+├── backend/
+│   ├── app/
+│   │   ├── api/             REST endpoints
+│   │   ├── core/            Configuration and security
+│   │   ├── models/          Database models
+│   │   ├── schemas/         Request and response schemas
+│   │   ├── repositories/    Database access
+│   │   ├── services/        Business logic
+│   │   └── dependencies/    Authentication and permissions
+│   ├── alembic/             Database migrations
+│   └── tests/               Automated backend tests
+│
+├── frontend/
+│   └── src/                 React application
+│
+├── desktop/                 Electron application
+│
+└── docs/                    Technical documentation
+```
+
+---
 
 ## Documentation
 
-Additional technical documentation is available in the [`docs/`](docs/) directory.
+Additional technical details are available in the repository:
 
-Some useful files:
+| Document | Description |
+|---|---|
+| `docs/BACKEND_ARCHITECTURE.md` | Backend structure and design decisions |
+| `docs/BACKEND_API_GUIDE.md` | API endpoints and usage |
+| `docs/BACKEND_DIAGRAMS.md` | Architecture, database, and workflow diagrams |
+| `docs/database-design.md` | Database design and relationships |
+| `docs/TECH_DEBT.md` | Known limitations and technical improvements |
+| `docs/PROFESSOR_DEMO_GUIDE.md` | Application demonstration walkthrough |
+| `docs/PROFESSOR_QA.md` | Technical questions and project explanations |
 
-- [`BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.md) — Backend architecture and design.
-- [`BACKEND_API_GUIDE.md`](docs/BACKEND_API_GUIDE.md) — API endpoints and permissions.
-- [`database-design.md`](docs/database-design.md) — Database structure and relationships.
-- [`BACKEND_DIAGRAMS.md`](docs/BACKEND_DIAGRAMS.md) — Architecture and flow diagrams.
-- [`TECH_DEBT.md`](docs/TECH_DEBT.md) — Known limitations and future improvements.
+---
 
-## Project Status
+## What I Learned Building ITOnIT
 
-ITOnIT was developed as an academic project to demonstrate the design and implementation of a full-stack application.
+One of the biggest lessons from this project was that building a working application involves much more than connecting a frontend to a database.
 
-The project covers backend development, frontend development, database design, authentication, role-based permissions, multi-tenant architecture, and desktop integration.
+The challenging parts were often the details between features: keeping permissions consistent, ensuring organizations cannot access one another's data, preserving history when records change, and making different parts of the system work together reliably.
 
-Some features and deployment configurations are intended for demonstration and development purposes rather than unrestricted production use.
+ITOnIT also provided hands-on experience with database migrations, API design, authentication, automated testing, desktop packaging, and deploying a full-stack application for external access.
 
-## Authors
+The result is a project that brings together the different areas of software engineering into one connected system.
 
-Developed as a Computer Science final project.
+---
+
+## Project Background & Contributors
+
+ITOnIT was developed as a **Computer Science final project**, covering the design and implementation of a full-stack IT management platform.
+
+The project includes the application architecture, relational database, backend services, frontend interface, Windows desktop client, testing infrastructure, and public demonstration website.
+
+**Contributors:**
+
+- [emmahr1998](https://github.com/emmahr1998)
+- [danielcohen0121](https://github.com/danielcohen0121)
+
+---
+
+<p align="center">
+  <strong>ITOnIT</strong>
+</p>
+
+<p align="center">
+  Making IT support easier to manage, one request at a time.
+</p>
+
+<p align="center">
+  <a href="https://itonit.netlify.app">Explore ITOnIT</a> ·
+  <a href="https://github.com/emmahr1998/ITOnIT">View Repository</a>
+</p>
