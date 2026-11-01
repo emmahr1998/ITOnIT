@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -23,18 +23,33 @@ class User(TimestampMixin, Base):
     """A person who interacts with the system: employee, technician, company
     administrator, or (for exactly one row, platform-wide) system administrator.
 
-    company_id is nullable only for the single System Administrator account,
-    which belongs to ITOnIT itself rather than to any customer company - every
-    other role always has a company_id. username and email are unique per
-    company, not platform-wide: the login flow resolves the company (via
-    company_code) before looking a user up, so the same email may exist in
-    two different companies without ambiguity.
+    The single System Administrator belongs to the dedicated platform
+    company (Company.is_platform) and is the only row with
+    is_system_administrator=True - uq_users_single_system_administrator, a
+    filtered unique index, makes a second one impossible at the database
+    level. Platform access requires the flag, the System Administrator
+    role, AND membership of the platform company together (see
+    app.dependencies.auth.require_system_administrator), so any drift
+    between them fails closed. company_id is still nullable in the schema
+    for backward compatibility with the pre-platform-company layout, but
+    after the add_platform_company migration no row has it null.
+    username and email are unique per company, not platform-wide: the login
+    flow resolves the company (via company_code) before looking a user up,
+    so the same email may exist in two different companies without
+    ambiguity.
     """
 
     __tablename__ = "users"
     __table_args__ = (
         UniqueConstraint("company_id", "username", name="uq_users_company_id_username"),
         UniqueConstraint("company_id", "email", name="uq_users_company_id_email"),
+        Index(
+            "uq_users_single_system_administrator",
+            "is_system_administrator",
+            unique=True,
+            mssql_where=text("is_system_administrator = 1"),
+            sqlite_where=text("is_system_administrator = 1"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -51,6 +66,9 @@ class User(TimestampMixin, Base):
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="1"
+    )
+    is_system_administrator: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
     )
 
     company: Mapped["Company | None"] = relationship(back_populates="users")

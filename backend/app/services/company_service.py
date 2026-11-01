@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.roles import PLATFORM_COMPANY_CODE
 from app.core.security import hash_password
 from app.models.category import Category
 from app.models.company import Company
@@ -99,6 +100,12 @@ def _generate_company_code_candidate() -> str:
         secrets.choice(_COMPANY_CODE_ALPHABET) for _ in range(_COMPANY_CODE_RANDOM_LENGTH)
     )
     return f"{_COMPANY_CODE_PREFIX}{suffix}"
+
+
+def _is_reserved_company_code(company_code: str) -> bool:
+    """The platform company's code is reserved even before that company is
+    bootstrapped, so no customer can register or rename into it first."""
+    return company_code.strip().lower() == PLATFORM_COMPANY_CODE.lower()
 
 
 class CompanyCodeConflictError(Exception):
@@ -236,7 +243,10 @@ class CompanyService:
         the final company_code back off admin.company for the response.
         """
         if company_code is not None:
-            if self._company_repository.get_by_code(company_code) is not None:
+            if (
+                _is_reserved_company_code(company_code)
+                or self._company_repository.get_by_code(company_code) is not None
+            ):
                 raise CompanyCodeConflictError
         else:
             company_code = self._generate_unique_company_code()
@@ -316,6 +326,8 @@ class CompanyService:
 
         if "company_code" in fields_set and payload.company_code is not None:
             if payload.company_code.lower() != company.company_code.lower():
+                if _is_reserved_company_code(payload.company_code):
+                    raise CompanyCodeConflictError
                 existing = self._company_repository.get_by_code(payload.company_code)
                 if existing is not None and existing.id != company_id:
                     raise CompanyCodeConflictError

@@ -30,8 +30,14 @@ from app.models.inventory_category import InventoryCategory
 from app.models.inventory_item import InventoryItem
 from app.models.ticket import Ticket
 from app.models.user import User
-from app.scripts.seed_initial_data import _seed_platform_administrator
+from app.scripts.seed_initial_data import (
+    PlatformBootstrapConflictError,
+    _seed_platform_administrator,
+    _seed_platform_company,
+)
 from tests.conftest import (
+    FakeCompanyRepository,
+    FakeUserRepository,
     ADMIN_PASSWORD,
     COMPANY_A_ID,
     COMPANY_B_ADMIN_PASSWORD,
@@ -1027,26 +1033,11 @@ class TestPlatformAdministratorSeed:
     layer - mirrors how this codebase would test any other seed-script
     function, using the same fake repositories as everywhere else."""
 
-    def test_seed_skipped_when_configuration_absent(
-        self, monkeypatch: pytest.MonkeyPatch, user_repository, role_repository
-    ):
-
-        monkeypatch.setattr("app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL", None)
-        monkeypatch.setattr("app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", None)
-        before = len(user_repository._by_id)
-        _seed_platform_administrator(user_repository, role_repository)
-        assert len(user_repository._by_id) == before
-
-    def test_seed_creates_expected_company_id_null_system_administrator(
-        self, monkeypatch: pytest.MonkeyPatch, user_repository, role_repository
-    ):
-
+    @staticmethod
+    def _configure(monkeypatch: pytest.MonkeyPatch, email: str | None, password: str | None):
+        monkeypatch.setattr("app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL", email)
         monkeypatch.setattr(
-            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL",
-            "new_platform_admin@itonit.test",
-        )
-        monkeypatch.setattr(
-            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", "SeedTestPass1!"
+            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", password
         )
         monkeypatch.setattr(
             "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_FIRST_NAME", None
@@ -1054,57 +1045,100 @@ class TestPlatformAdministratorSeed:
         monkeypatch.setattr(
             "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_LAST_NAME", None
         )
-        _seed_platform_administrator(user_repository, role_repository)
-        created = user_repository.get_platform_administrator("new_platform_admin@itonit.test")
+
+    def test_seed_skipped_when_configuration_absent(
+        self, monkeypatch: pytest.MonkeyPatch, role_repository, platform_company
+    ):
+        self._configure(monkeypatch, None, None)
+        empty = FakeUserRepository([])
+        _seed_platform_administrator(empty, role_repository, platform_company)
+        assert empty._by_id == {}
+
+    def test_seed_creates_flagged_administrator_in_platform_company(
+        self, monkeypatch: pytest.MonkeyPatch, role_repository, platform_company
+    ):
+        self._configure(monkeypatch, "new_platform_admin@itonit.test", "SeedTestPass1!")
+        empty = FakeUserRepository([])
+        _seed_platform_administrator(empty, role_repository, platform_company)
+        created = empty.get_system_administrator()
         assert created is not None
-        assert created.company_id is None
-        # role_id, not created.role.name: the fake's create() doesn't
-        # populate the .role relationship the way a real, session-attached
-        # ORM object would lazy-load it - this is a fake-only limitation,
-        # not something the real seed script needs to work around.
-        expected_role = role_repository.get_by_name("System Administrator")
-        assert created.role_id == expected_role.id
+        assert created.company_id == platform_company.id
+        assert created.is_system_administrator is True
+        assert created.role_id == role_repository.get_by_name("System Administrator").id
 
     def test_seed_run_twice_does_not_create_a_duplicate(
-        self, monkeypatch: pytest.MonkeyPatch, user_repository, role_repository
+        self, monkeypatch: pytest.MonkeyPatch, role_repository, platform_company
     ):
+        self._configure(monkeypatch, "twice_platform_admin@itonit.test", "SeedTestPass1!")
+        empty = FakeUserRepository([])
+        _seed_platform_administrator(empty, role_repository, platform_company)
+        _seed_platform_administrator(empty, role_repository, platform_company)
+        assert len(empty._by_id) == 1
 
-        monkeypatch.setattr(
-            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL",
-            "twice_platform_admin@itonit.test",
-        )
-        monkeypatch.setattr(
-            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", "SeedTestPass1!"
-        )
-        _seed_platform_administrator(user_repository, role_repository)
-        after_first = len(user_repository._by_id)
-        _seed_platform_administrator(user_repository, role_repository)
-        after_second = len(user_repository._by_id)
-        assert after_second == after_first
+    def test_seed_never_creates_a_second_account_even_for_a_different_email(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        user_repository,
+        role_repository,
+        platform_company,
+        active_system_administrator_user: User,
+    ):
+        self._configure(monkeypatch, "someone_else@itonit.test", "SeedTestPass1!")
+        before = len(user_repository._by_id)
+        _seed_platform_administrator(user_repository, role_repository, platform_company)
+        assert len(user_repository._by_id) == before
 
     def test_seed_does_not_mutate_an_existing_platform_account(
         self,
         monkeypatch: pytest.MonkeyPatch,
         user_repository,
         role_repository,
+        platform_company,
         active_system_administrator_user: User,
     ):
         """Re-running the seed against an already-provisioned platform
         account must leave it untouched - no field is rewritten, no new
         row created, matching _seed_admin_user's own idempotency
         contract."""
-        monkeypatch.setattr(
-            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_EMAIL",
-            active_system_administrator_user.email,
-        )
-        monkeypatch.setattr(
-            "app.scripts.seed_initial_data.settings.PLATFORM_ADMIN_PASSWORD", "SomeOtherPass1!"
-        )
+        self._configure(monkeypatch, active_system_administrator_user.email, "SomeOtherPass1!")
         original_hash = active_system_administrator_user.password_hash
         before = len(user_repository._by_id)
-        _seed_platform_administrator(user_repository, role_repository)
+        _seed_platform_administrator(user_repository, role_repository, platform_company)
         assert len(user_repository._by_id) == before
         assert active_system_administrator_user.password_hash == original_hash
+
+    def test_seed_refuses_when_a_tenant_user_holds_the_role(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        user_repository,
+        role_repository,
+        platform_company,
+        active_employee_user: User,
+        system_administrator_role,
+    ):
+        """The user-91 scenario: a tenant user wrongly promoted. The
+        bootstrap stops and changes nothing - it never demotes, deletes, or
+        adopts that user by itself."""
+        self._configure(monkeypatch, "new_platform_admin@itonit.test", "SeedTestPass1!")
+        active_employee_user.role_id = system_administrator_role.id
+        active_employee_user.role = system_administrator_role
+        before = len(user_repository._by_id)
+        with pytest.raises(PlatformBootstrapConflictError, match=str(active_employee_user.id)):
+            _seed_platform_administrator(user_repository, role_repository, platform_company)
+        assert len(user_repository._by_id) == before
+        assert active_employee_user.role_id == system_administrator_role.id
+
+    def test_seed_platform_company_is_idempotent(self, company_repository, platform_company):
+        assert _seed_platform_company(company_repository) is platform_company
+
+    def test_seed_platform_company_refuses_customer_holding_reserved_code(
+        self, company_a, company_b, suspended_company
+    ):
+        company_a.company_code = "ITONIT-SYSTEM"
+        repo = FakeCompanyRepository([company_a, company_b, suspended_company])
+        with pytest.raises(PlatformBootstrapConflictError):
+            _seed_platform_company(repo)
+        assert repo.get_platform_company() is None
 
 
 # ===========================================================================

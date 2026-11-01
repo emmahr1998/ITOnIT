@@ -17,7 +17,9 @@ _RECENT_COMPANIES_LIMIT = 5
 
 
 class CompanyNotFoundError(Exception):
-    """Raised when a platform-admin company_id does not exist.
+    """Raised when a platform-admin company_id does not exist, or names the
+    platform company itself (which is not a customer company and can't be
+    inspected or suspended through these routes).
 
     Deliberately a separate exception from CompanyService's own
     CompanyNotFoundError - get_company_detail below never calls
@@ -78,7 +80,7 @@ class PlatformService:
     create_company, from CompanyService.register_company's own return
     value) - never derived from the caller (a System Administrator has no
     company_id - see get_current_company_id's docstring) and never treated
-    as authorization (that's require_roles("System Administrator") alone,
+    as authorization (that's require_system_administrator alone,
     enforced by the route, before this service is ever called).
     """
 
@@ -145,7 +147,7 @@ class PlatformService:
         return companies, total
 
     def get_company_detail(self, company_id: int) -> CompanyDetail:
-        company = self._company_repository.get_by_id(company_id)
+        company = self._company_repository.get_customer_company_by_id(company_id)
         if company is None:
             raise CompanyNotFoundError
         return CompanyDetail(
@@ -172,7 +174,7 @@ class PlatformService:
         cascade to users/tickets/inventory/settings in any way; reuses
         get_company_detail for the response rather than duplicating its
         aggregate-count queries."""
-        company = self._company_repository.get_by_id(company_id)
+        company = self._company_repository.get_customer_company_by_id(company_id)
         if company is None:
             raise CompanyNotFoundError
         company.is_active = is_active

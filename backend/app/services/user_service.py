@@ -1,6 +1,7 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.roles import COMPANY_ADMINISTRATOR_ROLE, COMPANY_ROLE_NAMES
 from app.core.security import hash_password, verify_password
 from app.models.department import Department
 from app.models.role import Role
@@ -13,7 +14,7 @@ from app.schemas.user import AdminPasswordSetRequest, PasswordChangeRequest, Use
 # Fields a user may change on their own profile via PATCH /users/{id}.
 # Anything else on UserUpdate is Company-Administrator-only.
 _SELF_EDITABLE_FIELDS = frozenset({"first_name", "last_name", "phone_number"})
-_MANAGE_ROLES = frozenset({"Company Administrator"})
+_MANAGE_ROLES = frozenset({COMPANY_ADMINISTRATOR_ROLE})
 
 
 class UserNotFoundError(Exception):
@@ -30,6 +31,13 @@ class EmailConflictError(Exception):
 
 class InvalidRoleError(Exception):
     """Raised when a role_id does not reference an existing role."""
+
+
+class RoleNotAssignableError(Exception):
+    """Raised when a role_id references a real role that company user
+    management may not hand out - i.e. System Administrator. Its single
+    account is provisioned only by app.scripts.seed_initial_data.
+    """
 
 
 class InvalidDepartmentError(Exception):
@@ -124,10 +132,25 @@ class UserService:
         return self.get_user(user_id)
 
     def _get_role_or_raise(self, role_id: int) -> Role:
+        """Resolve an assignable company role, or fail explicitly - an
+        unknown id is InvalidRoleError and a platform-only role is
+        RoleNotAssignableError. Never falls back to any default role."""
         role = self._role_repository.get_by_id(role_id)
         if role is None:
             raise InvalidRoleError
+        if role.name not in COMPANY_ROLE_NAMES:
+            raise RoleNotAssignableError
         return role
+
+    def _get_manageable_user(self, user_id: int) -> User:
+        """get_user, but the System Administrator account is never
+        editable, demotable, deactivatable, or re-passworded through
+        company user management. It lives in the platform company, so
+        company scoping already hides it; this is defense in depth."""
+        user = self.get_user(user_id)
+        if user.is_system_administrator:
+            raise UserPermissionError
+        return user
 
     def _get_department_or_raise(self, department_id: int) -> Department:
         department = self._department_repository.get_by_id(department_id)
@@ -186,7 +209,7 @@ class UserService:
         field with a non-None value is rejected outright rather than
         silently ignored.
         """
-        is_admin = current_user.role.name == "Company Administrator"
+        is_admin = current_user.role.name == COMPANY_ADMINISTRATOR_ROLE
         fields_set = payload.model_fields_set
 
         if not is_admin:
@@ -196,7 +219,7 @@ class UserService:
             if disallowed:
                 raise UserPermissionError
 
-        user = self.get_user(user_id)
+        user = self._get_manageable_user(user_id)
 
         if "username" in fields_set and payload.username is not None:
             duplicate = self._user_repository.get_by_username(payload.username)
@@ -248,7 +271,7 @@ class UserService:
         self._db.commit()
 
     def admin_set_password(self, user_id: int, payload: AdminPasswordSetRequest) -> None:
-        user = self.get_user(user_id)
+        user = self._get_manageable_user(user_id)
         user.password_hash = hash_password(payload.new_password)
         self._user_repository.update(user)
         self._db.commit()
