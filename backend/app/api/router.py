@@ -14,6 +14,7 @@ from app.api.routes import (
     locations,
     platform,
     priorities,
+    roles,
     support,
     tickets,
     users,
@@ -31,6 +32,7 @@ api_router.include_router(priorities.router)
 api_router.include_router(inventory_categories.router)
 api_router.include_router(inventory_items.router)
 api_router.include_router(inventory_transactions.router)
+api_router.include_router(roles.router)
 api_router.include_router(users.router)
 api_router.include_router(tickets.flat_router)
 api_router.include_router(tickets.router)

@@ -3,25 +3,35 @@ import { Modal } from "../common/Modal";
 import { ErrorMessage } from "../common/ErrorMessage";
 import { createUser } from "../../api/users";
 import { getApiErrorMessage } from "../../api/client";
-import { ROLE_ID_BY_NAME, ROLE_OPTIONS } from "../../types/user";
-import type { AdminUser, AssignableRole } from "../../types/user";
+import type { AdminUser, RoleOption } from "../../types/user";
 import type { Department } from "../../types/department";
 import styles from "./UserEditModal.module.css";
 
 interface CreateUserModalProps {
   departments: Department[];
+  /** From GET /roles - the only source of real role ids. */
+  roles: RoleOption[];
+  rolesError: string | null;
   onClose: () => void;
   onCreated: (user: AdminUser) => void;
 }
 
-export function CreateUserModal({ departments, onClose, onCreated }: CreateUserModalProps) {
+export function CreateUserModal({
+  departments,
+  roles,
+  rolesError,
+  onClose,
+  onCreated,
+}: CreateUserModalProps) {
   const [username, setUsername] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [departmentId, setDepartmentId] = useState("");
-  const [role, setRole] = useState<AssignableRole>("Employee");
+  // Defaults to Employee by *name*, resolved to its real id from GET /roles.
+  const [roleId, setRoleId] = useState("");
+  const effectiveRoleId = roleId || roles.find((r) => r.name === "Employee")?.id.toString() || "";
   const [password, setPassword] = useState("");
 
   const [saving, setSaving] = useState(false);
@@ -29,6 +39,10 @@ export function CreateUserModal({ departments, onClose, onCreated }: CreateUserM
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!effectiveRoleId) {
+      setError(rolesError ?? "Select a role for this user.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -39,7 +53,7 @@ export function CreateUserModal({ departments, onClose, onCreated }: CreateUserM
         email: email.trim(),
         phone_number: phoneNumber.trim() || null,
         department_id: departmentId ? Number(departmentId) : null,
-        role_id: ROLE_ID_BY_NAME[role],
+        role_id: Number(effectiveRoleId),
         password,
       });
       onCreated(created);
@@ -137,13 +151,16 @@ export function CreateUserModal({ departments, onClose, onCreated }: CreateUserM
           <label className="field">
             <span className="fieldLabel">Role</span>
             <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as AssignableRole)}
+              value={effectiveRoleId}
+              onChange={(e) => setRoleId(e.target.value)}
               className="select"
+              required
+              disabled={roles.length === 0}
             >
-              {ROLE_OPTIONS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
+              {roles.length === 0 && <option value="">Roles unavailable</option>}
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
                 </option>
               ))}
             </select>

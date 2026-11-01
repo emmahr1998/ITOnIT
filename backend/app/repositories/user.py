@@ -1,6 +1,7 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import false, func, or_, select, true
 from sqlalchemy.orm import Session, selectinload
 
+from app.models.company import Company
 from app.models.user import User
 from app.repositories.base import BaseRepository
 
@@ -154,29 +155,27 @@ class UserRepository(BaseRepository[User]):
         return self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
     def get_platform_administrator(self, identifier: str) -> User | None:
-        """The one lookup scoped to company_id IS NULL - resolves only the
-        single platform-level System Administrator account, never a tenant
-        user (Milestone 8, Phase 8.3). Deliberately a dedicated method
-        rather than reusing get_by_username()/get_by_email() (both fall
-        back to this instance's own construction-time company_id, or
-        search *every* tenant when unscoped - see this class's own
-        docstring) or get_by_username_or_email() (which requires a
-        specific company_id): none of those can express "only the
-        company-less account" safely, and reusing one of them for platform
-        login would let a same-named tenant user's credentials match.
-        Matches either username or email, case-insensitively, same
-        convention as get_by_username_or_email. Used by both
-        AuthService.authenticate_platform_administrator (login) and
-        seed_initial_data._seed_platform_administrator (idempotency
-        check) - always call this on an unscoped UserRepository(db),
-        though this method ignores self.company_id/_scope() entirely
-        regardless, the same way count_all_tenant_users does.
+        """The one login lookup for the platform-level System Administrator:
+        matches only the row flagged is_system_administrator that belongs to
+        the platform company (Company.is_platform), never a tenant user -
+        even one who holds the System Administrator role by mistake.
+        Deliberately a dedicated method rather than reusing
+        get_by_username()/get_by_email() (both fall back to this instance's
+        own construction-time company_id, or search *every* tenant when
+        unscoped) or get_by_username_or_email() (which requires a specific
+        company_id): none of those can express "only the platform account"
+        safely, and reusing one of them for platform login would let a
+        same-named tenant user's credentials match. Matches either username
+        or email, case-insensitively, same convention as
+        get_by_username_or_email. Ignores self.company_id/_scope() entirely.
         """
         normalized = identifier.strip().lower()
         return self.db.scalar(
             select(User)
+            .join(Company, User.company_id == Company.id)
             .where(
-                User.company_id.is_(None),
+                User.is_system_administrator == true(),
+                Company.is_platform == true(),
                 or_(
                     func.lower(User.username) == normalized,
                     func.lower(User.email) == normalized,
@@ -185,14 +184,37 @@ class UserRepository(BaseRepository[User]):
             .options(*_EAGER_OPTIONS)
         )
 
+    def get_system_administrator(self) -> User | None:
+        """The single row flagged is_system_administrator, whatever its
+        company - used by seed_initial_data's idempotency check, so a
+        second account is never created even if the first one's email
+        differs from PLATFORM_ADMIN_EMAIL. Ignores self.company_id."""
+        return self.db.scalar(
+            select(User).where(User.is_system_administrator == true()).options(*_EAGER_OPTIONS)
+        )
+
+    def list_by_role_id_unscoped(self, role_id: int) -> list[User]:
+        """Every user holding ``role_id`` across all companies - used only
+        by seed_initial_data to detect conflicting System Administrator role
+        holders before bootstrapping. Ignores self.company_id."""
+        return list(
+            self.db.scalars(
+                select(User).where(User.role_id == role_id).options(*_EAGER_OPTIONS)
+            ).all()
+        )
+
     def count_all_tenant_users(self) -> int:
         """Platform-only cross-tenant aggregate (Milestone 8, Phase 8.1):
-        every user that belongs to a company, across every company at once -
-        deliberately ignores this repository's own construction-time
-        company_id/_scope() entirely (call this on an unscoped
-        UserRepository(db), the same instance get_current_user resolves
-        identity through). Excludes the single System Administrator account
-        (company_id IS NULL), which is a platform-level user, not a tenant
-        one - see PlatformService.get_overview."""
-        stmt = select(func.count()).select_from(User).where(User.company_id.isnot(None))
+        every user that belongs to a customer company, across every company
+        at once - deliberately ignores this repository's own
+        construction-time company_id/_scope() entirely (call this on an
+        unscoped UserRepository(db)). Excludes the platform company's own
+        account(s) - the System Administrator is a platform-level user, not
+        a tenant one - see PlatformService.get_overview."""
+        stmt = (
+            select(func.count())
+            .select_from(User)
+            .join(Company, User.company_id == Company.id)
+            .where(Company.is_platform == false())
+        )
         return self.db.scalar(stmt) or 0

@@ -22,6 +22,7 @@ from app.dependencies.inventory_transaction import get_inventory_transaction_ser
 from app.dependencies.location import get_location_service
 from app.dependencies.platform import get_platform_service
 from app.dependencies.priority import get_priority_service
+from app.api.routes.roles import get_role_repository
 from app.dependencies.support import get_support_service
 from app.dependencies.ticket import get_ticket_service
 from app.dependencies.ticket_inventory import get_ticket_inventory_service
@@ -91,6 +92,11 @@ COMPANY_A_CODE = "COMPANYA1"
 COMPANY_B_CODE = "COMPANYB1"
 SUSPENDED_COMPANY_ID = 3
 SUSPENDED_COMPANY_CODE = "SUSPENDED1"
+
+# The dedicated internal platform company the System Administrator belongs
+# to (Company.is_platform) - mirrors app.core.roles.PLATFORM_COMPANY_CODE.
+PLATFORM_COMPANY_ID = 900
+PLATFORM_COMPANY_CODE = "ITONIT-SYSTEM"
 
 
 class FakeUserRepository:
@@ -245,21 +251,34 @@ class FakeUserRepository:
 
     def count_all_tenant_users(self) -> int:
         """Mirrors UserRepository.count_all_tenant_users - ignores
-        self.company_id/_in_scope entirely, same as the real method."""
-        return sum(1 for u in self._by_id.values() if u.company_id is not None)
+        self.company_id/_in_scope entirely, same as the real method, and
+        excludes platform-company users."""
+        return sum(
+            1
+            for u in self._by_id.values()
+            if u.company_id is not None and not (u.company is not None and u.company.is_platform)
+        )
+
+    def get_system_administrator(self) -> User | None:
+        return next((u for u in self._by_id.values() if u.is_system_administrator), None)
+
+    def list_by_role_id_unscoped(self, role_id: int) -> list[User]:
+        return [u for u in self._by_id.values() if u.role_id == role_id]
 
     def get_platform_administrator(self, identifier: str) -> User | None:
-        """Mirrors UserRepository.get_platform_administrator - the one
-        lookup restricted to company_id IS NULL, ignoring self.company_id/
-        _in_scope entirely (same as count_all_tenant_users), matching
-        either username or email. A tenant user's username/email must
-        never match here, no matter how this fake was constructed."""
+        """Mirrors UserRepository.get_platform_administrator - matches only
+        the flagged account in the platform company, ignoring
+        self.company_id/_in_scope entirely, matching either username or
+        email. A tenant user's username/email must never match here - not
+        even one holding the System Administrator role."""
         target = identifier.strip().lower()
         return next(
             (
                 u
                 for u in self._by_id.values()
-                if u.company_id is None
+                if u.is_system_administrator
+                and u.company is not None
+                and u.company.is_platform
                 and (u.username.lower() == target or u.email.lower() == target)
             ),
             None,
@@ -292,6 +311,9 @@ class FakeRoleRepository:
     def get_by_name(self, name: str) -> Role | None:
         return next((r for r in self._by_id.values() if r.name == name), None)
 
+    def get_by_names(self, names: tuple[str, ...]) -> list[Role]:
+        return [r for name in names if (r := self.get_by_name(name)) is not None]
+
 
 class FakeCompanyRepository:
     """In-memory stand-in for CompanyRepository. Same rationale as FakeUserRepository."""
@@ -308,6 +330,13 @@ class FakeCompanyRepository:
         return next(
             (c for c in self._by_id.values() if c.company_code.lower() == target), None
         )
+
+    def get_platform_company(self) -> Company | None:
+        return next((c for c in self._by_id.values() if c.is_platform), None)
+
+    def get_customer_company_by_id(self, company_id: int) -> Company | None:
+        company = self._by_id.get(company_id)
+        return company if company is not None and not company.is_platform else None
 
     def create(self, obj: Company) -> Company:
         obj.id = self._next_id
@@ -335,7 +364,7 @@ class FakeCompanyRepository:
     def _filtered(
         self, *, search: str | None = None, is_active: bool | None = None
     ) -> list[Company]:
-        results = list(self._by_id.values())
+        results = [c for c in self._by_id.values() if not c.is_platform]
         if is_active is not None:
             results = [c for c in results if c.is_active == is_active]
         if search:
@@ -1358,17 +1387,37 @@ def system_administrator_role() -> Role:
 
 
 @pytest.fixture
-def active_system_administrator_user(system_administrator_role: Role) -> User:
-    """The one platform-level user: company_id=None, company=None - exactly
-    the shape get_current_active_user/get_current_company_id expect for a
-    System Administrator. Used both via auth_headers() (a JWT built
+def platform_company() -> Company:
+    """The dedicated internal ITOnIT organization (is_platform=True) - not a
+    customer tenant; never listed, counted, or resolvable by company code."""
+    now = datetime.now(timezone.utc)
+    return Company(
+        id=PLATFORM_COMPANY_ID,
+        name="ITOnIT Platform Administration",
+        company_code=PLATFORM_COMPANY_CODE,
+        timezone="UTC",
+        language="en",
+        is_active=True,
+        is_platform=True,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.fixture
+def active_system_administrator_user(
+    system_administrator_role: Role, platform_company: Company
+) -> User:
+    """The one platform-level user: belongs to the platform company and is
+    flagged is_system_administrator - the full identity
+    require_system_administrator checks for. Used both via auth_headers() (a JWT built
     directly, for Phase 8.1/8.2 tests that don't care about login itself)
     and via a real POST /platform/login call with this fixture's own
     plaintext password below (Phase 8.3's login tests)."""
     now = datetime.now(timezone.utc)
     user = User(
         id=999,
-        company_id=None,
+        company_id=PLATFORM_COMPANY_ID,
         username="platform_admin",
         first_name="Pat",
         last_name="Admin",
@@ -1376,12 +1425,13 @@ def active_system_administrator_user(system_administrator_role: Role) -> User:
         password_hash=hash_password("PlatformAdminPass1!"),
         role_id=system_administrator_role.id,
         is_active=True,
+        is_system_administrator=True,
         created_at=now,
         updated_at=now,
     )
     user.role = system_administrator_role
     user.department = None
-    user.company = None
+    user.company = platform_company
     return user
 
 
@@ -2063,9 +2113,9 @@ def role_repository(
 
 @pytest.fixture
 def company_repository(
-    company_a: Company, company_b: Company, suspended_company: Company
+    company_a: Company, company_b: Company, suspended_company: Company, platform_company: Company
 ) -> FakeCompanyRepository:
-    return FakeCompanyRepository([company_a, company_b, suspended_company])
+    return FakeCompanyRepository([company_a, company_b, suspended_company, platform_company])
 
 
 @pytest.fixture
@@ -2505,6 +2555,7 @@ def client(
     app.dependency_overrides[get_history_service] = _history_service
     app.dependency_overrides[get_attachment_service] = _attachment_service
     app.dependency_overrides[get_platform_service] = _platform_service
+    app.dependency_overrides[get_role_repository] = lambda: role_repository
     app.dependency_overrides[get_support_service] = lambda: support_service
     with TestClient(app) as test_client:
         yield test_client

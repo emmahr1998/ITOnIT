@@ -1,6 +1,7 @@
 import jwt
 from sqlalchemy.orm import Session
 
+from app.core.roles import SYSTEM_ADMINISTRATOR_ROLE
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -52,13 +53,6 @@ class InvalidRefreshTokenError(Exception):
     """
 
 
-# The one role authenticate_platform_administrator ever accepts - see that
-# method's own docstring for why this check exists even though
-# UserRepository.get_platform_administrator's own WHERE clause (company_id
-# IS NULL) already restricts the lookup to the platform account.
-_SYSTEM_ADMINISTRATOR_ROLE_NAME = "System Administrator"
-
-
 class AuthService:
     """Coordinates the login and refresh flows, and issues tokens on behalf
     of company registration (see CompanyService.register_company): locate
@@ -89,7 +83,10 @@ class AuthService:
         intentional exception to this service's usual non-disclosure.
         """
         company = self._company_repository.get_by_code(company_code)
-        if company is None:
+        if company is None or company.is_platform:
+            # The platform organization is not a tenant workspace: its code
+            # is indistinguishable from an unknown one here, and its
+            # administrator signs in only through POST /platform/login.
             raise CompanyNotFoundError
         if not company.is_active:
             raise CompanySuspendedError
@@ -100,10 +97,11 @@ class AuthService:
         InvalidCredentialsError (or CompanySuspendedError - see class
         docstrings)."""
         company = self._company_repository.get_by_code(company_code)
-        if company is None:
+        if company is None or company.is_platform:
             # Folded into the generic credentials error here (unlike
             # resolve_company) so login can't be used to probe which
-            # company codes are valid.
+            # company codes are valid. The platform company is refused the
+            # same way - see resolve_company.
             raise InvalidCredentialsError
         if not company.is_active:
             raise CompanySuspendedError
@@ -115,24 +113,27 @@ class AuthService:
         return user
 
     def authenticate_platform_administrator(self, identifier: str, password: str) -> User:
-        """POST /platform/login's lookup (Milestone 8, Phase 8.3). Same
-        non-disclosure contract as authenticate(): unknown identifier,
-        wrong password, an inactive platform account, and - critically -
-        an identifier that belongs to a real tenant user rather than the
-        platform account, all collapse into the identical
-        InvalidCredentialsError. Never falls back to any other lookup if
-        get_platform_administrator returns nothing; that method's own
-        company_id IS NULL restriction is what makes this safe to call
-        with a tenant user's username/email without ever matching one.
+        """POST /platform/login's lookup. Same non-disclosure contract as
+        authenticate(): unknown identifier, wrong password, an inactive
+        platform account, and - critically - an identifier that belongs to a
+        tenant user (even one who holds the System Administrator role by
+        mistake) all collapse into the identical InvalidCredentialsError.
+        get_platform_administrator only ever matches the flagged account in
+        the platform company; the checks below re-verify the full identity
+        (same three conditions as require_system_administrator) as defense
+        in depth.
         """
         user = self._user_repository.get_platform_administrator(identifier)
         if user is None or not verify_password(password, user.password_hash):
             raise InvalidCredentialsError
         if not user.is_active:
             raise InvalidCredentialsError
-        if user.role.name != _SYSTEM_ADMINISTRATOR_ROLE_NAME:
-            # Defense in depth only - get_platform_administrator's own
-            # WHERE clause already guarantees this can't happen today.
+        if (
+            user.role.name != SYSTEM_ADMINISTRATOR_ROLE
+            or not user.is_system_administrator
+            or user.company is None
+            or not user.company.is_platform
+        ):
             raise InvalidCredentialsError
         return user
 

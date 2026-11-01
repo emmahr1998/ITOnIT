@@ -7,6 +7,7 @@ from app.dependencies.auth import (
     get_current_user,
     get_user_repository,
     require_roles,
+    require_system_administrator,
 )
 from app.dependencies.category import get_category_repository, get_category_service
 from app.dependencies.comment import get_comment_repository, get_comment_service
@@ -51,6 +52,7 @@ __all__ = [
     "get_user_repository",
     "get_user_service",
     "require_roles",
+    "require_system_administrator",
     "get_category_repository",
     "get_category_service",
     "get_comment_repository",

@@ -1,4 +1,4 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import false, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
@@ -39,8 +39,24 @@ class CompanyRepository(BaseRepository[Company]):
             )
         )
 
+    def get_platform_company(self) -> Company | None:
+        """The single internal ITOnIT organization (is_platform=True), if
+        it has been bootstrapped - see Company's docstring."""
+        return self.db.scalar(select(Company).where(Company.is_platform == true()))
+
+    def get_customer_company_by_id(self, company_id: int) -> Company | None:
+        """Like get_by_id, but never returns the platform company - every
+        System Administrator company-management operation goes through
+        this, so the platform organization can't be inspected, suspended,
+        or reactivated as if it were a customer tenant."""
+        return self.db.scalar(
+            select(Company).where(Company.id == company_id, Company.is_platform == false())
+        )
+
     def _filtered_statement(self, *, search: str | None, is_active: bool | None):
-        stmt = select(Company)
+        # Customer companies only - the platform organization never appears
+        # in a platform listing or count (see Company's docstring).
+        stmt = select(Company).where(Company.is_platform == false())
         if is_active is not None:
             stmt = stmt.where(Company.is_active == is_active)
         if search:

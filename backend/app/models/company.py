@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -28,9 +28,28 @@ class Company(TimestampMixin, Base):
     companies is enforced by CompanyScopedRepository filtering every query
     by company_id - this model itself carries no isolation logic, it is
     just the row every other tenant-owned row points back to.
+
+    Exactly one row may have is_platform=True: "ITOnIT Platform
+    Administration" (app.core.roles.PLATFORM_COMPANY_CODE), the internal
+    organization the single System Administrator belongs to. It is created
+    only by the add_platform_company migration / seed_initial_data, never
+    through registration, and is excluded from every customer-company
+    listing, count, and company-code login (see CompanyRepository and
+    AuthService). uq_companies_single_platform is a filtered unique index,
+    so the database itself rejects a second platform row, concurrent
+    bootstrap runs included.
     """
 
     __tablename__ = "companies"
+    __table_args__ = (
+        Index(
+            "uq_companies_single_platform",
+            "is_platform",
+            unique=True,
+            mssql_where=text("is_platform = 1"),
+            sqlite_where=text("is_platform = 1"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -40,6 +59,9 @@ class Company(TimestampMixin, Base):
     timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="UTC", server_default="UTC")
     language: Mapped[str] = mapped_column(String(10), nullable=False, default="en", server_default="en")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    is_platform: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     users: Mapped[list["User"]] = relationship(back_populates="company")
     tickets: Mapped[list["Ticket"]] = relationship(back_populates="company")

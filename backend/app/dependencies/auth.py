@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.roles import SYSTEM_ADMINISTRATOR_ROLE
 from app.core.security import decode_access_token
 from app.dependencies.database import get_db
 from app.models.user import User
@@ -60,10 +61,11 @@ def get_current_active_user(current_user: User = Depends(get_current_user)) -> U
     The company check runs fresh on every request (current_user.company is
     eager-loaded by UserRepository.get_by_id, not lazy-loaded), not just at
     login - suspending a company immediately revokes access for all of its
-    users, even ones holding a still-valid, unexpired access token. A user
-    with no company (company_id is None - the platform-level System
-    Administrator, who logs in through the separate /platform/login) has no
-    company to check here.
+    users, even ones holding a still-valid, unexpired access token. The
+    System Administrator's own company is the platform company, which
+    PlatformService never lets anyone deactivate, so this check can't lock
+    the platform account out. A legacy company-less row (company_id is
+    None) has no company to check here.
     """
     if not current_user.is_active:
         raise HTTPException(
@@ -84,30 +86,65 @@ def get_current_company_id(current_user: User = Depends(get_current_active_user)
     company_id from - always derived from the authenticated user's own row,
     never from a client-supplied header/param/body field, anywhere.
 
-    Every tenant user has a company (company_id is nullable on User only
-    for the platform-level System Administrator account, which is served
-    exclusively by the /platform routes and never depends on this). A
-    company-less account that reaches a tenant route is refused here with a
-    clear 403 rather than silently returning None: a `WHERE company_id =
-    NULL` query would just as safely return nothing, but failing loudly
-    makes it obvious the route is tenant-only, not that data quietly
-    vanished.
+    Every tenant user has a company. The System Administrator belongs to
+    the platform company (Company.is_platform), which is not a tenant: it is
+    served exclusively by the /platform routes and is refused here, so the
+    platform account can never read or write tenant-scoped data through an
+    ordinary tenant route - its cross-company access exists only where
+    require_system_administrator explicitly grants it. A company-less
+    account is refused the same way rather than silently returning None: a
+    `WHERE company_id = NULL` query would just as safely return nothing,
+    but failing loudly makes it obvious the route is tenant-only, not that
+    data quietly vanished.
     """
     if current_user.company_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This account has no associated company",
         )
+    if current_user.company is not None and current_user.company.is_platform:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform accounts cannot access company workspaces",
+        )
     return current_user.company_id
+
+
+def require_system_administrator(
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """The only gate on every protected /platform route - the one place
+    platform-wide (cross-company) access is granted.
+
+    Deliberately stricter than require_roles("System Administrator"): a role
+    name alone is not enough, since role_id is just a column a tenant user
+    can end up pointing at by mistake. Access requires all three of the
+    System Administrator role, the is_system_administrator flag (unique
+    across the whole users table), and membership of the platform company.
+    Any mismatch between them fails closed with the same 403.
+    """
+    is_platform_member = current_user.company is not None and bool(
+        current_user.company.is_platform
+    )
+    if not (
+        current_user.role.name == SYSTEM_ADMINISTRATOR_ROLE
+        and current_user.is_system_administrator
+        and is_platform_member
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to perform this action",
+        )
+    return current_user
 
 
 def require_roles(*allowed_role_names: str) -> Callable[..., User]:
     """Build a dependency that only allows users whose role is in allowed_role_names.
 
     Usage: Depends(require_roles("Company Administrator"))
-    Role names must match app.models.role.Role.name exactly, e.g. one of the
-    roles seeded by app.scripts.seed_initial_data: Employee, Technician,
-    Company Administrator, System Administrator.
+    Role names must match app.models.role.Role.name exactly - one of
+    app.core.roles.COMPANY_ROLE_NAMES. Never use this for System
+    Administrator access; that is require_system_administrator's job.
     """
 
     def dependency(current_user: User = Depends(get_current_active_user)) -> User:

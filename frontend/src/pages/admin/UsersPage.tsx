@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { KeyRound, Pencil, Plus, Power, Search, X } from "lucide-react";
 import { fetchUsers, updateUser } from "../../api/users";
 import { fetchDepartments } from "../../api/departments";
+import { fetchAssignableRoles } from "../../api/roles";
 import { getApiErrorMessage } from "../../api/client";
 import { Skeleton } from "../../components/common/Skeleton";
 import { ErrorMessage } from "../../components/common/ErrorMessage";
@@ -11,8 +12,7 @@ import { EmptyState } from "../../components/common/EmptyState";
 import { UserEditModal } from "../../components/admin/UserEditModal";
 import { UserPasswordModal } from "../../components/admin/UserPasswordModal";
 import { CreateUserModal } from "../../components/admin/CreateUserModal";
-import { ROLE_ID_BY_NAME, ROLE_OPTIONS } from "../../types/user";
-import type { AdminUser, AssignableRole } from "../../types/user";
+import type { AdminUser, RoleOption } from "../../types/user";
 import type { Department } from "../../types/department";
 import styles from "./UsersPage.module.css";
 
@@ -22,13 +22,16 @@ export function UsersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [roles, setRoles] = useState<RoleOption[]>([]);
+  const [rolesError, setRolesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState<AssignableRole | "">("");
+  // Holds a role id from GET /roles (as a string, for the <select>).
+  const [roleFilter, setRoleFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
 
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -58,6 +61,14 @@ export function UsersPage() {
   }, []);
 
   useEffect(() => {
+    // Unlike departments, roles are required to create or edit a user, so a
+    // failure is shown instead of silently falling back to any default role.
+    fetchAssignableRoles()
+      .then(setRoles)
+      .catch((err) => setRolesError(getApiErrorMessage(err, "Could not load roles.")));
+  }, []);
+
+  useEffect(() => {
     const timeout = setTimeout(() => setSearch(searchInput), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timeout);
   }, [searchInput]);
@@ -67,7 +78,7 @@ export function UsersPage() {
     setError(null);
     fetchUsers({
       search: search || undefined,
-      role_id: roleFilter ? ROLE_ID_BY_NAME[roleFilter] : undefined,
+      role_id: roleFilter ? Number(roleFilter) : undefined,
       department_id: departmentFilter ? Number(departmentFilter) : undefined,
       limit: 500,
     })
@@ -140,14 +151,14 @@ export function UsersPage() {
         </div>
         <select
           value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value as AssignableRole | "")}
+          onChange={(e) => setRoleFilter(e.target.value)}
           className="select"
           aria-label="Filter by role"
         >
           <option value="">All roles</option>
-          {ROLE_OPTIONS.map((role) => (
-            <option key={role} value={role}>
-              {role}
+          {roles.map((role) => (
+            <option key={role.id} value={role.id}>
+              {role.name}
             </option>
           ))}
         </select>
@@ -254,6 +265,8 @@ export function UsersPage() {
         <UserEditModal
           user={editingUser}
           departments={departments}
+          roles={roles}
+          rolesError={rolesError}
           onClose={() => setEditingUser(null)}
           onSaved={handleUserUpdated}
         />
@@ -266,6 +279,8 @@ export function UsersPage() {
       {creatingUser && (
         <CreateUserModal
           departments={departments}
+          roles={roles}
+          rolesError={rolesError}
           onClose={() => setCreatingUser(false)}
           onCreated={handleUserCreated}
         />

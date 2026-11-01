@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.dependencies import get_auth_service, get_platform_service, require_roles
+from app.dependencies import (
+    get_auth_service,
+    get_platform_service,
+    require_system_administrator,
+)
 from app.models.user import User
 from app.schemas.auth import TokenResponse
 from app.schemas.company import PlatformCompanyRegisterRequest
@@ -18,15 +22,13 @@ from app.services.platform_service import CompanyNotFoundError, PlatformService
 
 router = APIRouter(prefix="/platform", tags=["Platform"])
 
-# The only permission every route below except /login ever checks. No
-# route depends on get_current_company_id anywhere - a System
-# Administrator has no company_id at all (see get_current_company_id's own
-# docstring), and every route here exists specifically to see across every
-# company, not one. A company_id appearing in a URL below identifies the
-# resource being inspected, never authorization - access comes exclusively
-# from this role check, identical for every company_id a caller might
-# supply.
-_PLATFORM_ROLES = ("System Administrator",)
+# Every route below except /login depends on require_system_administrator -
+# never require_roles("System Administrator"), which checks the role name
+# only. That guard also requires the is_system_administrator flag and
+# platform-company membership, so a tenant user whose role_id was changed
+# to System Administrator gets no platform access at all. No route depends
+# on get_current_company_id: a company_id in a URL below identifies the
+# customer company being inspected, never authorization.
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -36,8 +38,8 @@ def platform_login(
 ) -> TokenResponse:
     """Public - the one route in this router with no
     require_roles(...) dependency, since there is no authenticated caller
-    yet (Milestone 8, Phase 8.3). Resolves ONLY the platform-level System
-    Administrator account (company_id IS NULL) - see
+    yet (Milestone 8, Phase 8.3). Resolves ONLY the flagged System
+    Administrator account in the platform company - see
     AuthService.authenticate_platform_administrator and
     UserRepository.get_platform_administrator. Never accepts a
     company_code; this is not a tenant login and never falls back to one.
@@ -60,7 +62,7 @@ def platform_login(
 def create_platform_company(
     payload: PlatformCompanyRegisterRequest,
     platform_service: PlatformService = Depends(get_platform_service),
-    _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
+    _current_user: User = Depends(require_system_administrator),
 ) -> DataResponse[CompanyDetailResponse]:
     """System-Administrator-only (Milestone 8, Phase 8.4). Uses its own
     request schema (PlatformCompanyRegisterRequest) that, unlike public
@@ -87,7 +89,7 @@ def create_platform_company(
 @router.get("/overview", response_model=DataResponse[PlatformOverviewResponse])
 def get_platform_overview(
     platform_service: PlatformService = Depends(get_platform_service),
-    _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
+    _current_user: User = Depends(require_system_administrator),
 ) -> DataResponse[PlatformOverviewResponse]:
     overview = platform_service.get_overview()
     return DataResponse(
@@ -105,7 +107,7 @@ def list_platform_companies(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     platform_service: PlatformService = Depends(get_platform_service),
-    _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
+    _current_user: User = Depends(require_system_administrator),
 ) -> CompanyListResponse:
     companies, total = platform_service.list_companies(
         search=search,
@@ -126,7 +128,7 @@ def list_platform_companies(
 def get_platform_company_detail(
     company_id: int,
     platform_service: PlatformService = Depends(get_platform_service),
-    _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
+    _current_user: User = Depends(require_system_administrator),
 ) -> DataResponse[CompanyDetailResponse]:
     try:
         detail = platform_service.get_company_detail(company_id)
@@ -144,7 +146,7 @@ def get_platform_company_detail(
 def activate_platform_company(
     company_id: int,
     platform_service: PlatformService = Depends(get_platform_service),
-    _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
+    _current_user: User = Depends(require_system_administrator),
 ) -> DataResponse[CompanyDetailResponse]:
     """Idempotent - activating an already-active company still succeeds.
     Only flips Company.is_active; see PlatformService.set_company_active's
@@ -167,7 +169,7 @@ def activate_platform_company(
 def deactivate_platform_company(
     company_id: int,
     platform_service: PlatformService = Depends(get_platform_service),
-    _current_user: User = Depends(require_roles(*_PLATFORM_ROLES)),
+    _current_user: User = Depends(require_system_administrator),
 ) -> DataResponse[CompanyDetailResponse]:
     """Idempotent - deactivating an already-inactive company still
     succeeds. Never deletes or mutates any tenant data (users, tickets,
