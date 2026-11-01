@@ -15,6 +15,7 @@ from app.services.user_service import (
     InvalidCurrentPasswordError,
     InvalidDepartmentError,
     InvalidRoleError,
+    RoleNotAssignableError,
     UserNotFoundError,
     UserPermissionError,
     UserService,
@@ -44,6 +45,10 @@ def create_user(
         ) from exc
     except InvalidRoleError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "role_id does not exist") from exc
+    except RoleNotAssignableError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "This role cannot be assigned through user management"
+        ) from exc
     except InvalidDepartmentError as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "department_id does not exist"
@@ -118,6 +123,10 @@ def update_user(
         ) from exc
     except InvalidRoleError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "role_id does not exist") from exc
+    except RoleNotAssignableError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "This role cannot be assigned through user management"
+        ) from exc
     except InvalidDepartmentError as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "department_id does not exist"
@@ -151,4 +160,8 @@ def admin_set_password(
         user_service.admin_set_password(user_id, payload)
     except UserNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found") from exc
+    except UserPermissionError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "You do not have permission to edit this user"
+        ) from exc
     return DataResponse(data=None, msg="Password updated successfully")

@@ -3,29 +3,40 @@ import { Modal } from "../common/Modal";
 import { ErrorMessage } from "../common/ErrorMessage";
 import { updateUser } from "../../api/users";
 import { getApiErrorMessage } from "../../api/client";
-import { ROLE_ID_BY_NAME, ROLE_OPTIONS } from "../../types/user";
-import type { AdminUser, AssignableRole } from "../../types/user";
+import type { AdminUser, RoleOption } from "../../types/user";
 import type { Department } from "../../types/department";
 import styles from "./UserEditModal.module.css";
 
 interface UserEditModalProps {
   user: AdminUser;
   departments: Department[];
+  /** From GET /roles - the only source of real role ids. */
+  roles: RoleOption[];
+  rolesError: string | null;
   onClose: () => void;
   onSaved: (user: AdminUser) => void;
 }
 
-export function UserEditModal({ user, departments, onClose, onSaved }: UserEditModalProps) {
+export function UserEditModal({
+  user,
+  departments,
+  roles,
+  rolesError,
+  onClose,
+  onSaved,
+}: UserEditModalProps) {
   const [username, setUsername] = useState(user.username);
   const [firstName, setFirstName] = useState(user.first_name);
   const [lastName, setLastName] = useState(user.last_name);
   const [email, setEmail] = useState(user.email);
   const [phoneNumber, setPhoneNumber] = useState(user.phone_number ?? "");
   const [departmentId, setDepartmentId] = useState(user.department?.id.toString() ?? "");
-  // This modal only ever edits a company-scoped user (GET /users is scoped
-  // to the caller's company), so `user.role` is never the platform-only
-  // "System Administrator" in practice, even though `Role` allows it.
-  const [role, setRole] = useState<AssignableRole>(user.role as AssignableRole);
+  // The user's current role resolved to its real id. undefined when the
+  // current role isn't assignable here (e.g. a tenant user who was wrongly
+  // given "System Administrator") - the admin must then pick a role
+  // explicitly; it never silently falls back to Employee.
+  const currentRoleId = roles.find((r) => r.name === user.role)?.id;
+  const [roleId, setRoleId] = useState(currentRoleId?.toString() ?? "");
   const [isActive, setIsActive] = useState(user.is_active);
 
   const [saving, setSaving] = useState(false);
@@ -33,6 +44,10 @@ export function UserEditModal({ user, departments, onClose, onSaved }: UserEditM
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!roleId) {
+      setError(rolesError ?? "Select a role for this user.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -43,7 +58,9 @@ export function UserEditModal({ user, departments, onClose, onSaved }: UserEditM
         email: email.trim(),
         phone_number: phoneNumber.trim() || null,
         department_id: departmentId ? Number(departmentId) : null,
-        role_id: ROLE_ID_BY_NAME[role],
+        // Only sent when it actually changed, so editing other fields never
+        // rewrites the role.
+        ...(Number(roleId) !== currentRoleId ? { role_id: Number(roleId) } : {}),
         is_active: isActive,
       });
       onSaved(updated);
@@ -140,13 +157,20 @@ export function UserEditModal({ user, departments, onClose, onSaved }: UserEditM
           <label className="field">
             <span className="fieldLabel">Role</span>
             <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as AssignableRole)}
+              value={roleId}
+              onChange={(e) => setRoleId(e.target.value)}
               className="select"
+              required
+              disabled={roles.length === 0}
             >
-              {ROLE_OPTIONS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
+              {currentRoleId === undefined && (
+                <option value="" disabled>
+                  {roles.length === 0 ? "Roles unavailable" : `${user.role} - choose a role`}
+                </option>
+              )}
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
                 </option>
               ))}
             </select>
