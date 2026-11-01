@@ -7,16 +7,7 @@
 Built with React, TypeScript, FastAPI, and SQL Server, ITOnIT supports multiple organizations, role-based access, and both web and Windows desktop clients.
 
 <p align="center">
-  <a href="https://itonit.netlify.app"><strong>🌐 Explore the Live Application</strong></a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
-  <img src="https://img.shields.io/badge/TypeScript-Frontend-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/SQL%20Server-Database-CC2927" alt="SQL Server">
-  <img src="https://img.shields.io/badge/Electron-Desktop-47848F?logo=electron&logoColor=white" alt="Electron">
+  <a href="https://itonit.netlify.app"><strong>
 </p>
 
 ---
