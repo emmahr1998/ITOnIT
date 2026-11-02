@@ -12,9 +12,9 @@ export interface CompanySettings {
 /**
  * PATCH /companies/me request body. Partial: omit a field to leave it
  * unchanged. contact_email may be explicitly cleared with an empty string.
+ * company_code is not editable - the backend generates it at registration.
  */
 export interface CompanyUpdateRequest {
   name?: string;
-  company_code?: string;
   contact_email?: string;
 }

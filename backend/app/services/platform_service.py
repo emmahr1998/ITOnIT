@@ -187,16 +187,15 @@ class PlatformService:
         on a customer's behalf. Delegates the entire job - company-code
         uniqueness check, company + first Company Administrator + all
         starter data, one atomic transaction - to
-        CompanyService.register_company unchanged, passing payload.company_code
-        through explicitly (this flow's schema requires one, unlike public
-        self-registration's - see PlatformCompanyRegisterRequest's own
-        docstring); this method adds no business logic of its own beyond
-        that and obtaining the response. Deliberately does not catch
+        CompanyService.register_company unchanged, which generates the
+        company_code exactly as it does for public self-registration (the
+        System Administrator never chooses one); this method adds no
+        business logic of its own beyond obtaining the response. Deliberately does not catch
         CompanyCodeConflictError here: it propagates unchanged up to the
         route, which maps it exactly the same way POST /companies/register's
         own route already does - one exception type, one 409 mapping, not a
         second platform-specific copy of either. Unlike self-registration,
         the caller (a System Administrator) is never issued tokens for the
         new tenant admin - see the route's own docstring."""
-        admin = self._company_service.register_company(payload, company_code=payload.company_code)
+        admin = self._company_service.register_company(payload)
         return self.get_company_detail(admin.company_id)

@@ -8,11 +8,6 @@ import styles from "../admin/CompanySettingsPage.module.css";
 import registerStyles from "../RegisterPage.module.css";
 import loginStyles from "../LoginPage.module.css";
 
-// Mirrors the backend's validate_company_code_format
-// (backend/app/schemas/validators.py) - same pattern RegisterPage/
-// CompanySettingsPage already use, kept in sync deliberately.
-const COMPANY_CODE_PATTERN = /^[A-Za-z0-9_-]{3,20}$/;
-
 /**
  * POST /platform/companies. Reuses RegisterPage's exact field set and
  * validation, but is deliberately NOT wired through AuthContext -
@@ -25,7 +20,6 @@ export function PlatformCreateCompanyPage() {
   const navigate = useNavigate();
 
   const [companyName, setCompanyName] = useState("");
-  const [companyCode, setCompanyCode] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [username, setUsername] = useState("");
@@ -33,24 +27,15 @@ export function PlatformCreateCompanyPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [companyCodeError, setCompanyCodeError] = useState<string | null>(null);
   const [confirmPasswordError, setConfirmPasswordError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setCompanyCodeError(null);
     setConfirmPasswordError(null);
     setSubmitError(null);
 
-    const trimmedCode = companyCode.trim();
-    if (!COMPANY_CODE_PATTERN.test(trimmedCode)) {
-      setCompanyCodeError(
-        "Company code must be 3-20 characters: letters, numbers, hyphens, or underscores only.",
-      );
-      return;
-    }
     if (password !== confirmPassword) {
       setConfirmPasswordError("Passwords do not match.");
       return;
@@ -60,7 +45,6 @@ export function PlatformCreateCompanyPage() {
     try {
       const created = await createPlatformCompany({
         company_name: companyName.trim(),
-        company_code: trimmedCode,
         first_name: firstName.trim(),
         last_name: lastName.trim(),
         username: username.trim(),
@@ -108,26 +92,10 @@ export function PlatformCreateCompanyPage() {
               autoFocus
               required
             />
-          </label>
-
-          <label className="field">
-            <span className="fieldLabel">
-              Company Code<span className="requiredMark">*</span>
-            </span>
-            <input
-              type="text"
-              className="input"
-              value={companyCode}
-              onChange={(event) => setCompanyCode(event.target.value)}
-              minLength={3}
-              maxLength={20}
-              required
-            />
             <span className={registerStyles.hint}>
-              A short, unique code this company's team will type in to sign in. Letters, numbers,
-              hyphens, and underscores only.
+              The company code is generated automatically from this name (for example,
+              IT-MICROSOFT-4821) and shown on the company page after creation.
             </span>
-            {companyCodeError && <ErrorMessage message={companyCodeError} />}
           </label>
         </div>
 

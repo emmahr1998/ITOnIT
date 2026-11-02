@@ -18,6 +18,7 @@ System-Administrator-only throughout. Every permission test class also
 proves the normal tenant roles are refused and that a company_id appearing
 in a platform URL never grants access on its own.
 """
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -1149,7 +1150,6 @@ class TestPlatformAdministratorSeed:
 def _platform_company_payload(**overrides: object) -> dict:
     payload = {
         "company_name": "Provisioned Co",
-        "company_code": "PROV0001",
         "first_name": "Pat",
         "last_name": "Admin",
         "username": "patadmin",
@@ -1172,7 +1172,7 @@ class TestPlatformCreateCompany:
         assert resp.status_code == 201
         data = resp.json()["data"]
         assert data["name"] == "Provisioned Co"
-        assert data["company_code"] == "PROV0001"
+        assert re.fullmatch(r"IT-PROVISIONED-[1-9][0-9]{3}", data["company_code"])
         assert data["user_count"] == 1
         assert data["ticket_count"] == 0
         assert data["inventory_item_count"] == 0
@@ -1182,7 +1182,7 @@ class TestPlatformCreateCompany:
     ):
         resp = client.post(
             "/platform/companies",
-            json=_platform_company_payload(company_code="PROV0002"),
+            json=_platform_company_payload(),
             headers=auth_headers(active_system_administrator_user),
         )
         body = resp.json()
@@ -1191,31 +1191,23 @@ class TestPlatformCreateCompany:
         assert "access" not in body["data"]
         assert "refresh" not in body["data"]
 
-    def test_duplicate_company_code_matches_self_registration_409(
+    def test_same_company_name_twice_gets_two_distinct_codes(
         self, client: TestClient, auth_headers, active_system_administrator_user
     ):
         headers = auth_headers(active_system_administrator_user)
-        client.post(
+        first = client.post("/platform/companies", json=_platform_company_payload(), headers=headers)
+        second = client.post(
             "/platform/companies",
-            json=_platform_company_payload(company_code="PROVDUP1"),
+            json=_platform_company_payload(username="anotheradmin", email="another@provisioned.test"),
             headers=headers,
         )
-        resp = client.post(
-            "/platform/companies",
-            json=_platform_company_payload(
-                company_code="PROVDUP1",
-                username="anotheradmin",
-                email="another@provisioned.test",
-            ),
-            headers=headers,
-        )
-        assert resp.status_code == 409
-        assert resp.json()["detail"] == "A company with this company code already exists"
+        assert first.status_code == 201 and second.status_code == 201
+        assert first.json()["data"]["company_code"] != second.json()["data"]["company_code"]
 
     def test_company_administrator_403(self, client: TestClient, auth_headers, active_admin_user):
         resp = client.post(
             "/platform/companies",
-            json=_platform_company_payload(company_code="PROVCA01"),
+            json=_platform_company_payload(),
             headers=auth_headers(active_admin_user),
         )
         assert resp.status_code == 403
@@ -1223,7 +1215,7 @@ class TestPlatformCreateCompany:
     def test_technician_403(self, client: TestClient, auth_headers, active_technician_user):
         resp = client.post(
             "/platform/companies",
-            json=_platform_company_payload(company_code="PROVTE01"),
+            json=_platform_company_payload(),
             headers=auth_headers(active_technician_user),
         )
         assert resp.status_code == 403
@@ -1231,14 +1223,14 @@ class TestPlatformCreateCompany:
     def test_employee_403(self, client: TestClient, auth_headers, active_employee_user):
         resp = client.post(
             "/platform/companies",
-            json=_platform_company_payload(company_code="PROVEM01"),
+            json=_platform_company_payload(),
             headers=auth_headers(active_employee_user),
         )
         assert resp.status_code == 403
 
     def test_unauthenticated_401(self, client: TestClient):
         resp = client.post(
-            "/platform/companies", json=_platform_company_payload(company_code="PROVUN01")
+            "/platform/companies", json=_platform_company_payload()
         )
         assert resp.status_code == 401
 
@@ -1246,14 +1238,14 @@ class TestPlatformCreateCompany:
         self, client: TestClient, auth_headers, active_system_administrator_user
     ):
         headers = auth_headers(active_system_administrator_user)
-        client.post(
+        created = client.post(
             "/platform/companies",
-            json=_platform_company_payload(company_code="PROVLIST"),
+            json=_platform_company_payload(),
             headers=headers,
-        )
-        resp = client.get("/platform/companies?search=PROVLIST", headers=headers)
+        ).json()["data"]["company_code"]
+        resp = client.get(f"/platform/companies?search={created}", headers=headers)
         codes = [c["company_code"] for c in resp.json()["data"]]
-        assert "PROVLIST" in codes
+        assert created in codes
 
     def test_created_company_visible_in_detail(
         self, client: TestClient, auth_headers, active_system_administrator_user
@@ -1261,13 +1253,15 @@ class TestPlatformCreateCompany:
         headers = auth_headers(active_system_administrator_user)
         create_resp = client.post(
             "/platform/companies",
-            json=_platform_company_payload(company_code="PROVDET1"),
+            json=_platform_company_payload(),
             headers=headers,
         )
         new_id = create_resp.json()["data"]["id"]
         detail_resp = client.get(f"/platform/companies/{new_id}", headers=headers)
         assert detail_resp.status_code == 200
-        assert detail_resp.json()["data"]["company_code"] == "PROVDET1"
+        assert (
+            detail_resp.json()["data"]["company_code"] == create_resp.json()["data"]["company_code"]
+        )
 
     def test_client_supplied_role_id_and_company_id_are_ignored_matching_self_registration(
         self, client: TestClient, auth_headers, active_system_administrator_user, company_a: Company
@@ -1283,14 +1277,15 @@ class TestPlatformCreateCompany:
         resp = client.post(
             "/platform/companies",
             json={
-                **_platform_company_payload(company_code="PROVEXTRA"),
+                **_platform_company_payload(),
+                "company_code": "PROVEXTRA",
                 "role_id": 999,
                 "company_id": company_a.id,
             },
             headers=auth_headers(active_system_administrator_user),
         )
         assert resp.status_code == 201
-        assert resp.json()["data"]["company_code"] == "PROVEXTRA"
+        assert resp.json()["data"]["company_code"] != "PROVEXTRA"
 
     def test_starter_data_matches_register_company_behavior(
         self,

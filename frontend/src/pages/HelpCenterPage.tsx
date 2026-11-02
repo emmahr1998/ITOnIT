@@ -11,7 +11,7 @@ const FAQS = [
   {
     question: "What is a company code?",
     answer:
-      "A company code (for example, IT-7K4M2P) identifies which company's workspace you're signing in to. It's required, along with your username and password, every time you sign in.",
+      "A company code (for example, IT-MICROSOFT-4821) identifies which company's workspace you're signing in to. It's required, along with your username and password, every time you sign in.",
   },
   {
     question: "Where do I get my company code?",

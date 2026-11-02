@@ -54,11 +54,8 @@ export async function deactivatePlatformCompany(companyId: number): Promise<Plat
 }
 
 /**
- * POST /platform/companies. Uses its own PlatformCompanyRegisterRequest
- * type - the public CompanyRegisterRequest's fields plus a required
- * company_code, since a System Administrator provisioning a company
- * chooses it explicitly (unlike public self-registration, which never
- * accepts one at all). Deliberately not routed through
+ * POST /platform/companies. Same fields as public self-registration; the
+ * backend generates the company_code here too. Deliberately not routed through
  * AuthContext.registerCompany: the response has no tokens at all (a System
  * Administrator provisioning a company is never signed in as its new
  * admin), so this is a plain data call like every other function here.

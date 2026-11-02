@@ -12,21 +12,13 @@ import { SuccessMessage } from "../../components/common/SuccessMessage";
 import type { CompanySettings } from "../../types/company";
 import styles from "./CompanySettingsPage.module.css";
 
-// Mirrors the backend's validate_company_code_format
-// (backend/app/schemas/validators.py) - kept in sync deliberately, so an
-// obviously-invalid code is caught here instead of round-tripping to the
-// server first.
-const COMPANY_CODE_PATTERN = /^[A-Za-z0-9_-]{3,20}$/;
-
 export function CompanySettingsPage() {
   const [settings, setSettings] = useState<CompanySettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
-  const [companyCode, setCompanyCode] = useState("");
   const [contactEmail, setContactEmail] = useState("");
-  const [companyCodeError, setCompanyCodeError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -38,7 +30,6 @@ export function CompanySettingsPage() {
   function applySettings(next: CompanySettings) {
     setSettings(next);
     setName(next.name);
-    setCompanyCode(next.company_code);
     setContactEmail(next.contact_email ?? "");
   }
 
@@ -51,22 +42,12 @@ export function CompanySettingsPage() {
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setCompanyCodeError(null);
     setSaveError(null);
-
-    const trimmedCode = companyCode.trim();
-    if (!COMPANY_CODE_PATTERN.test(trimmedCode)) {
-      setCompanyCodeError(
-        "Company code must be 3-20 characters: letters, numbers, hyphens, or underscores only.",
-      );
-      return;
-    }
 
     setSaving(true);
     try {
       const updated = await updateCompanySettings({
         name: name.trim(),
-        company_code: trimmedCode,
         contact_email: contactEmail.trim(),
       });
       applySettings(updated);
@@ -186,23 +167,12 @@ export function CompanySettingsPage() {
         <div className={styles.subsection}>
           <h2 className={styles.sectionTitle}>Company Code</h2>
           <label className="field">
-            <span className="fieldLabel">
-              Company Code<span className="requiredMark">*</span>
-            </span>
-            <input
-              type="text"
-              className="input"
-              value={companyCode}
-              onChange={(event) => setCompanyCode(event.target.value)}
-              minLength={3}
-              maxLength={20}
-              required
-            />
+            <span className="fieldLabel">Company Code</span>
+            <input type="text" className="input" value={settings.company_code} readOnly />
             <span className={styles.hint}>
-              The code your team types in to sign in. Changing it immediately affects sign-in for
-              everyone at your company.
+              The code your team types in to sign in. It was generated automatically when your
+              company registered and can&rsquo;t be changed.
             </span>
-            {companyCodeError && <ErrorMessage message={companyCodeError} />}
           </label>
         </div>
 

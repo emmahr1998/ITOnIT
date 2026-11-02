@@ -53,7 +53,8 @@ def register_company(
     CompanyService.register_company. The request body has no company_code
     field (see CompanyRegisterRequest's own docstring) and this call never
     passes one through, so the backend always generates a unique one
-    (format "IT-XXXXXX"); the response includes it, so the new Company
+    from the company name (format "IT-{NAME}-{DIGITS}", e.g.
+    "IT-MICROSOFT-4821"); the response includes it, so the new Company
     Administrator can see/share it immediately.
 
     send_welcome_email=True is this route's own explicit opt-in to
@@ -104,12 +105,7 @@ def update_company_settings(
     company_service: CompanyService = Depends(get_company_service),
     _current_user: User = Depends(require_roles(*_MANAGE_ROLES)),
 ) -> CompanySettingsResponse:
-    try:
-        company = company_service.update_company(company_id, payload)
-    except CompanyCodeConflictError as exc:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "A company with this company code already exists"
-        ) from exc
+    company = company_service.update_company(company_id, payload)
     return _to_settings_response(company)
 
 
