@@ -13,30 +13,37 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.models.company import Company
 from app.models.role import Role
 from app.models.user import User
 from app.schemas.company import CompanyRegisterRequest, PlatformCompanyRegisterRequest
-from app.services.company_service import CompanyCodeConflictError, CompanyService
+from app.services.company_service import (
+    CompanyCodeConflictError,
+    CompanyService,
+    _generate_company_code_candidate,
+    _normalize_company_name_for_code,
+)
 from app.services.email_service import SmtpEmailService
 from tests.conftest import COMPANY_A_CODE, FakeCompanyRepository, FakeEmailService
 
-# Mirrors CompanyService's own generated-code shape: "IT-" + 6 characters
-# from its alphabet (digits/uppercase letters, excluding 0/O/1/I).
-_GENERATED_CODE_PATTERN = re.compile(r"^IT-[2-9A-HJ-NP-Z]{6}$")
+# Mirrors CompanyService's own generated-code shape: "IT-", the normalized
+# company name (uppercase letters/digits, single hyphens), "-", then a
+# 4-6 digit number without a leading zero - at most 20 characters overall.
+_GENERATED_CODE_PATTERN = re.compile(r"^IT-[A-Z0-9]+(?:-[A-Z0-9]+)*-[1-9][0-9]{3,5}$")
+
+
+def _assert_generated_code(code: str, name_part: str) -> None:
+    assert _GENERATED_CODE_PATTERN.match(code), code
+    assert len(code) <= 20, code
+    assert code.startswith(f"IT-{name_part}-"), code
 
 
 def _payload(**overrides: object) -> dict:
     """A valid POST /companies/register body. Deliberately has no
     company_code key: CompanyRegisterRequest has no such field (see its own
-    docstring) - public registration always gets a system-generated one.
-    Tests that need an explicit, caller-chosen code (System Administrator
-    provisioning) use PlatformCompanyRegisterRequest / POST
-    /platform/companies instead - see the "Explicit company_code" section
-    below.
+    docstring) - registration always gets a system-generated one.
     """
     payload = {
         "company_name": "Acme Corp",
@@ -267,23 +274,32 @@ def test_register_company_without_code_generates_one_in_expected_format(
     response = _register(client, username="formatadmin", email="format@example.com")
     body = response.json()
     assert "company_code" in body
-    assert _GENERATED_CODE_PATTERN.match(body["company_code"]), body["company_code"]
+    _assert_generated_code(body["company_code"], "ACME-CORP")
 
 
-def test_register_company_without_code_never_derives_it_from_the_company_name(
-    client: TestClient,
+@pytest.mark.parametrize(
+    ("company_name", "name_part"),
+    [
+        ("Microsoft", "MICROSOFT"),
+        ("Google", "GOOGLE"),
+        ("Skai", "SKAI"),
+        ("skai", "SKAI"),
+    ],
+)
+def test_register_company_code_is_derived_from_the_company_name(
+    client: TestClient, company_name: str, name_part: str
 ) -> None:
-    """The generated code must not leak/encode the company name - e.g. no
-    "ACME"-looking prefix - it's drawn purely from the random alphabet."""
     response = _register(
         client,
-        company_name="A Very Distinctive Company Name LLC",
-        username="noderiveadmin",
-        email="noderive@example.com",
+        company_name=company_name,
+        username="derivedadmin",
+        email="derived@example.com",
     )
+    assert response.status_code == 201, response.text
     code = response.json()["company_code"]
-    assert "AVER" not in code.upper()
-    assert _GENERATED_CODE_PATTERN.match(code)
+    _assert_generated_code(code, name_part)
+    # The default suffix is exactly 4 digits.
+    assert re.fullmatch(rf"IT-{name_part}-[1-9][0-9]{{3}}", code), code
 
 
 def test_register_company_generated_code_is_returned_and_actually_usable_to_log_in(
@@ -324,57 +340,163 @@ def test_register_company_without_code_generates_unique_codes_across_calls(
     assert len(codes) == 5
 
 
-def test_generate_unique_company_code_retries_past_a_collision(
-    company_repository: FakeCompanyRepository,
-) -> None:
-    """Directly exercises CompanyService._generate_unique_company_code's
-    retry loop: the first candidate collides with an already-taken code,
-    the second doesn't, and the method must return the second one rather
-    than raising or returning the taken one."""
-    taken = Company(
-        id=999,
+# ---------------------------------------------------------------------------
+# Company-name normalization and candidate shape (pure functions)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("company_name", "expected"),
+    [
+        ("Microsoft", "MICROSOFT"),
+        ("Skai Ltd.", "SKAI-LTD"),
+        ("  Acme   Corp  ", "ACME-CORP"),
+        ("AT&T", "AT-T"),
+        ("Ben & Jerry's", "BEN-JERRY-S"),
+        ("Café Nero", "CAFE-NERO"),
+        ("3M", "3M"),
+        ("--Weird__Name!!", "WEIRD-NAME"),
+        # Nothing A-Z/0-9 left (e.g. a Hebrew-only name) -> fallback.
+        ("איטוניט", "COMPANY"),
+        ("!!!", "COMPANY"),
+    ],
+)
+def test_normalize_company_name_for_code(company_name: str, expected: str) -> None:
+    assert _normalize_company_name_for_code(company_name, 12) == expected
+
+
+def test_normalize_company_name_truncates_without_a_trailing_hyphen() -> None:
+    # "INTERNATIONAL-BUSINESS-MACHINES"[:12] == "INTERNATIONA"
+    assert _normalize_company_name_for_code("International Business Machines", 12) == "INTERNATIONA"
+    # "BLUE-SKY-AIR-..."[:12] would be "BLUE-SKY-AIR"; [:9] ends on a hyphen.
+    assert _normalize_company_name_for_code("Blue Sky Air Lines", 9) == "BLUE-SKY"
+
+
+@pytest.mark.parametrize("digits", [4, 5, 6])
+def test_generated_candidate_always_fits_the_company_code_column(digits: int) -> None:
+    """Company.company_code is String(20) - even a very long name must
+    produce a code of at most 20 characters for every suffix length."""
+    for _ in range(50):
+        code = _generate_company_code_candidate(
+            "The Extremely Long Multinational Holding Company Of Everything", digits
+        )
+        assert len(code) <= 20, code
+        assert _GENERATED_CODE_PATTERN.match(code), code
+        suffix = code.rsplit("-", 1)[1]
+        assert len(suffix) == digits and suffix[0] != "0", code
+
+
+def test_long_company_name_registers_with_a_truncated_code(client: TestClient) -> None:
+    response = _register(
+        client,
+        company_name="International Business Machines",
+        username="longnameadmin",
+        email="longname@example.com",
+    )
+    assert response.status_code == 201, response.text
+    code = response.json()["company_code"]
+    _assert_generated_code(code, "INTERNATIONA")
+    assert client.post("/auth/resolve-company", json={"company_code": code}).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Collision handling (service-level)
+# ---------------------------------------------------------------------------
+
+
+def _taken_company(code: str, id_: int = 999) -> Company:
+    return Company(
+        id=id_,
         name="Already Registered Co",
-        company_code="IT-AAAAAA",
+        company_code=code,
         timezone="UTC",
         language="en",
         is_active=True,
     )
-    company_repository.create(taken)
+
+
+def test_generate_unique_company_code_retries_past_a_collision(
+    company_repository: FakeCompanyRepository,
+) -> None:
+    """The first candidate collides with an already-taken code, the second
+    doesn't - the method must return the second one rather than raising
+    or returning the taken one."""
+    company_repository.create(_taken_company("IT-MICROSOFT-4821"))
 
     service = CompanyService(db=None, company_repository=company_repository)  # type: ignore[arg-type]
     with patch(
         "app.services.company_service._generate_company_code_candidate",
-        side_effect=["IT-AAAAAA", "IT-BBBBBB"],
+        side_effect=["IT-MICROSOFT-4821", "IT-MICROSOFT-7392"],
     ) as mock_candidate:
-        code = service._generate_unique_company_code()
+        code = service._generate_unique_company_code("Microsoft")
 
-    assert code == "IT-BBBBBB"
+    assert code == "IT-MICROSOFT-7392"
     assert mock_candidate.call_count == 2
+    assert mock_candidate.call_args_list[0].args == ("Microsoft", 4)
+
+
+def test_generate_unique_company_code_collision_check_is_case_insensitive(
+    company_repository: FakeCompanyRepository,
+) -> None:
+    """Login looks codes up case-insensitively, so a lowercase existing
+    code must count as a collision too."""
+    company_repository.create(_taken_company("it-skai-1058"))
+
+    service = CompanyService(db=None, company_repository=company_repository)  # type: ignore[arg-type]
+    with patch(
+        "app.services.company_service._generate_company_code_candidate",
+        side_effect=["IT-SKAI-1058", "IT-SKAI-2000"],
+    ):
+        assert service._generate_unique_company_code("Skai") == "IT-SKAI-2000"
+
+
+def test_generate_unique_company_code_widens_the_suffix_after_repeated_collisions(
+    company_repository: FakeCompanyRepository,
+) -> None:
+    """With every 4-digit attempt taken, the generator moves on to 5 and
+    then 6 digits instead of failing."""
+    service = CompanyService(db=None, company_repository=company_repository)  # type: ignore[arg-type]
+    taken = _taken_company("IT-GOOGLE-7392")
+    company_repository.create(taken)
+
+    def candidate(name: str, digits: int) -> str:
+        return "IT-GOOGLE-7392" if digits == 4 else f"IT-GOOGLE-{10 ** (digits - 1)}"
+
+    with patch(
+        "app.services.company_service._generate_company_code_candidate",
+        side_effect=candidate,
+    ) as mock_candidate:
+        code = service._generate_unique_company_code("Google")
+
+    assert code == "IT-GOOGLE-10000"
+    digits_tried = [c.args[1] for c in mock_candidate.call_args_list]
+    assert digits_tried == [4, 4, 4, 4, 4, 5]
 
 
 def test_generate_unique_company_code_gives_up_after_max_attempts(
     company_repository: FakeCompanyRepository,
 ) -> None:
-    """If every candidate collides (never happens in practice given the
-    ~1.07 billion-code space, but must still fail loudly rather than
-    silently returning a taken code or looping forever)."""
-    taken = Company(
-        id=999,
-        name="Already Registered Co",
-        company_code="IT-AAAAAA",
-        timezone="UTC",
-        language="en",
-        is_active=True,
-    )
-    company_repository.create(taken)
+    """If every candidate collides (never happens in practice), it must
+    fail loudly rather than silently returning a taken code or looping
+    forever."""
+    company_repository.create(_taken_company("IT-MICROSOFT-4821"))
 
     service = CompanyService(db=None, company_repository=company_repository)  # type: ignore[arg-type]
     with patch(
         "app.services.company_service._generate_company_code_candidate",
-        return_value="IT-AAAAAA",
+        return_value="IT-MICROSOFT-4821",
     ):
         with pytest.raises(RuntimeError):
-            service._generate_unique_company_code()
+            service._generate_unique_company_code("Microsoft")
+
+
+def test_registering_the_same_name_twice_gives_two_distinct_codes(client: TestClient) -> None:
+    first = _register(client, company_name="Skai", username="skai1", email="skai1@example.com")
+    second = _register(client, company_name="Skai", username="skai2", email="skai2@example.com")
+    assert first.status_code == 201 and second.status_code == 201
+    assert first.json()["company_code"] != second.json()["company_code"]
+    _assert_generated_code(first.json()["company_code"], "SKAI")
+    _assert_generated_code(second.json()["company_code"], "SKAI")
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +521,7 @@ def test_register_company_cannot_choose_company_code_via_request_body(
 ) -> None:
     """Sending company_code="MYCODE" in the request body must not make the
     new company's code "MYCODE" - the backend still generates a unique
-    "IT-XXXXXX" code exactly as if the field had never been sent at all."""
+    "IT-{NAME}-{DIGITS}" code exactly as if the field had never been sent."""
     response = client.post(
         "/companies/register",
         json={
@@ -410,7 +532,7 @@ def test_register_company_cannot_choose_company_code_via_request_body(
     assert response.status_code == 201, response.text
     code = response.json()["company_code"]
     assert code != "MYCODE"
-    assert _GENERATED_CODE_PATTERN.match(code), code
+    _assert_generated_code(code, "ACME-CORP")
 
     # "MYCODE" was never persisted as any company's code...
     not_found = client.post("/auth/resolve-company", json={"company_code": "MYCODE"})
@@ -427,46 +549,19 @@ def test_register_company_cannot_choose_company_code_via_request_body(
 
 
 # ---------------------------------------------------------------------------
-# Explicit company_code: System Administrator provisioning only. Unlike
-# public self-registration, POST /platform/companies uses its own
-# PlatformCompanyRegisterRequest schema (extends CompanyRegisterRequest
-# with a required company_code), passed through explicitly to
-# CompanyService.register_company's own company_code parameter - see
-# PlatformService.create_company.
+# System Administrator provisioning (POST /platform/companies) gets a
+# backend-generated code too - PlatformCompanyRegisterRequest has no
+# company_code field either.
 # ---------------------------------------------------------------------------
 
 
-def test_platform_company_register_request_requires_company_code() -> None:
-    with pytest.raises(ValidationError):
-        PlatformCompanyRegisterRequest(
-            company_name="No Code Co",
-            first_name="Pat",
-            last_name="Admin",
-            username="nocodeadmin",
-            email="nocode@example.com",
-            password="SuperSecret1!",
-        )
+def test_platform_company_register_request_schema_has_no_company_code_field() -> None:
+    assert "company_code" not in PlatformCompanyRegisterRequest.model_fields
 
 
-def test_platform_company_register_request_validates_company_code_format() -> None:
-    with pytest.raises(ValidationError):
-        PlatformCompanyRegisterRequest(
-            company_name="Bad Code Co",
-            company_code="not a valid code!",
-            first_name="Pat",
-            last_name="Admin",
-            username="badcodeadmin",
-            email="badcode@example.com",
-            password="SuperSecret1!",
-        )
-
-
-def test_platform_provisioning_with_explicit_code_does_not_generate_one(
+def test_platform_provisioning_generates_the_code_and_ignores_a_supplied_one(
     client: TestClient, auth_headers, active_system_administrator_user
 ) -> None:
-    """System Administrator provisioning (POST /platform/companies) still
-    lets the caller choose company_code explicitly - the one route whose
-    request schema still has that field at all."""
     response = client.post(
         "/platform/companies",
         json={
@@ -481,7 +576,12 @@ def test_platform_provisioning_with_explicit_code_does_not_generate_one(
         headers=auth_headers(active_system_administrator_user),
     )
     assert response.status_code == 201, response.text
-    assert response.json()["data"]["company_code"] == "EXPLICIT1"
+    code = response.json()["data"]["company_code"]
+    assert code != "EXPLICIT1"
+    _assert_generated_code(code, "PROVISIONED")
+    assert (
+        client.post("/auth/resolve-company", json={"company_code": "EXPLICIT1"}).status_code == 404
+    )
 
 
 # ---------------------------------------------------------------------------

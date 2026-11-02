@@ -24,6 +24,8 @@ from fastapi.testclient import TestClient
 from app.core.security import create_access_token
 from app.models.role import Role
 from app.models.user import User
+from app.schemas.company import CompanyRegisterRequest
+from app.services.company_service import CompanyCodeConflictError, CompanyService
 from tests.conftest import (
     COMPANY_A_CODE,
     COMPANY_A_ID,
@@ -401,10 +403,13 @@ class TestPlatformCompanySeparation:
     def test_reserved_code_cannot_be_provisioned(
         self, client, auth_headers, active_system_administrator_user
     ):
+        """Company codes are always backend-generated: a supplied reserved
+        code is ignored, and a name that normalizes to the reserved code
+        still gets an "IT-..." code, never the platform company's."""
         resp = client.post(
             "/platform/companies",
             json={
-                "company_name": "Impostor",
+                "company_name": "ITONIT SYSTEM",
                 "company_code": PLATFORM_COMPANY_CODE.lower(),
                 "first_name": "I",
                 "last_name": "M",
@@ -414,7 +419,26 @@ class TestPlatformCompanySeparation:
             },
             headers=auth_headers(active_system_administrator_user),
         )
-        assert resp.status_code == 409
+        assert resp.status_code == 201, resp.text
+        code = resp.json()["data"]["company_code"]
+        assert code.lower() != PLATFORM_COMPANY_CODE.lower()
+        # The name part is truncated to 12 characters to fit String(20).
+        assert code.startswith("IT-ITONIT-SYSTE-")
+
+    def test_reserved_code_refused_on_the_internal_fixed_code_path(self, company_repository):
+        """register_company's keyword-only company_code (used only by
+        server-side seed scripts) still refuses the reserved code."""
+        service = CompanyService(db=None, company_repository=company_repository)  # type: ignore[arg-type]
+        payload = CompanyRegisterRequest(
+            company_name="Impostor",
+            first_name="I",
+            last_name="M",
+            username="impostor",
+            email="impostor@impostor.test",
+            password="ImpostorPass1!",
+        )
+        with pytest.raises(CompanyCodeConflictError):
+            service.register_company(payload, company_code=PLATFORM_COMPANY_CODE.lower())
 
 
 # ===========================================================================

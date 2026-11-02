@@ -65,11 +65,11 @@ def create_platform_company(
     _current_user: User = Depends(require_system_administrator),
 ) -> DataResponse[CompanyDetailResponse]:
     """System-Administrator-only (Milestone 8, Phase 8.4). Uses its own
-    request schema (PlatformCompanyRegisterRequest) that, unlike public
-    self-registration's CompanyRegisterRequest, requires an explicit
-    company_code - and the exact same CompanyService.register_company call
-    self-service POST /companies/register uses, just passing that code
-    through - no parallel creation logic exists here, see
+    request schema (PlatformCompanyRegisterRequest, same fields as public
+    self-registration, no company_code) and the exact same
+    CompanyService.register_company call self-service POST
+    /companies/register uses, so the backend generates the company_code
+    here too - no parallel creation logic exists here, see
     PlatformService.create_company's own docstring. Unlike
     self-registration, no tokens are returned: a System Administrator
     provisioning a company on a customer's behalf is never signed in as

@@ -1,5 +1,7 @@
 import logging
+import re
 import secrets
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 
@@ -73,33 +75,45 @@ _STARTER_INVENTORY_CATEGORY_NAMES = [
     "Other",
 ]
 
-# Auto-generated company_code alphabet: digits and uppercase letters with
-# the pairs most often misread at a glance removed - 0/O and 1/I - so a
-# generated code is easy to read aloud and type back in on a login screen.
-# Not a security property, purely legibility (see validate_company_code_format
-# for the actual accepted-character set, which stays broader for backward
-# compatibility with any pre-existing/caller-supplied code).
-_COMPANY_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+# Auto-generated company_code shape: "IT-{NAME}-{DIGITS}", e.g.
+# "IT-MICROSOFT-4821" - recognizable as the company's own on a login
+# screen, with a random numeric suffix for uniqueness. Company.company_code
+# is String(20), so the name part is truncated to whatever room the prefix,
+# separator and suffix leave (12 characters with a 4-digit suffix).
+# Existing companies keep their codes; nothing regenerates them.
 _COMPANY_CODE_PREFIX = "IT-"
-_COMPANY_CODE_RANDOM_LENGTH = 6
-# 32**6 ≈ 1.07 billion possible codes - a handful of pre-check retries is
-# already overwhelming collision resistance for this project; the database's
-# own UNIQUE constraint on company_code (see the add_companies_table
-# migration) remains the final guarantee regardless of this number.
-_COMPANY_CODE_MAX_GENERATION_ATTEMPTS = 5
+_COMPANY_CODE_MAX_LENGTH = 20
+# Used when nothing A-Z/0-9 is left after normalization (e.g. a name
+# written entirely in Hebrew).
+_COMPANY_CODE_FALLBACK_NAME = "COMPANY"
+# Suffix length per attempt, in order: several 4-digit candidates first
+# (9,000 per name), widening to 5 and then 6 digits if a common name keeps
+# colliding. The database's own UNIQUE constraint on company_code (see the
+# add_companies_table migration) remains the final guarantee regardless.
+_COMPANY_CODE_SUFFIX_DIGITS = (4, 4, 4, 4, 4, 5, 5, 5, 6, 6)
 
 
-def _generate_company_code_candidate() -> str:
-    """One candidate auto-generated company code, e.g. "IT-7K4M2P" - never
-    derived from the company name (so renaming a company later can never
-    look like it "should" change the code), built from
-    _COMPANY_CODE_ALPHABET via the `secrets` module rather than `random`
-    (idiomatic for generating an identifier that must be unpredictable,
-    even though nothing here is actually security-sensitive)."""
-    suffix = "".join(
-        secrets.choice(_COMPANY_CODE_ALPHABET) for _ in range(_COMPANY_CODE_RANDOM_LENGTH)
-    )
-    return f"{_COMPANY_CODE_PREFIX}{suffix}"
+def _normalize_company_name_for_code(company_name: str, max_length: int) -> str:
+    """Company name -> code segment: accents folded to plain letters,
+    uppercased, every run of spaces/symbols collapsed to one hyphen, then
+    truncated to max_length without a dangling hyphen.
+    e.g. "Skai Ltd." -> "SKAI-LTD"."""
+    folded = unicodedata.normalize("NFKD", company_name)
+    ascii_name = folded.encode("ascii", "ignore").decode("ascii").upper()
+    slug = re.sub(r"[^A-Z0-9]+", "-", ascii_name).strip("-")
+    slug = slug[:max_length].rstrip("-")
+    return slug or _COMPANY_CODE_FALLBACK_NAME[:max_length]
+
+
+def _generate_company_code_candidate(company_name: str, digits: int = 4) -> str:
+    """One candidate auto-generated company code, e.g. "IT-MICROSOFT-4821":
+    the normalized name plus a random suffix of exactly `digits` digits
+    (never a leading zero), drawn via `secrets` rather than `random`."""
+    max_name_length = _COMPANY_CODE_MAX_LENGTH - len(_COMPANY_CODE_PREFIX) - 1 - digits
+    name_part = _normalize_company_name_for_code(company_name, max_name_length)
+    lowest = 10 ** (digits - 1)
+    suffix = lowest + secrets.randbelow(9 * lowest)
+    return f"{_COMPANY_CODE_PREFIX}{name_part}-{suffix}"
 
 
 def _is_reserved_company_code(company_code: str) -> bool:
@@ -198,8 +212,8 @@ class CompanyService:
     def register_company(
         self,
         payload: CompanyRegisterRequest,
-        company_code: str | None = None,
         *,
+        company_code: str | None = None,
         send_welcome_email: bool = False,
     ) -> User:
         """Create a new company, its first Company Administrator, and
@@ -213,18 +227,15 @@ class CompanyService:
         creates can conflict with anything already in it. company_code is
         the one value checked, since it must be unique platform-wide.
 
-        company_code is taken as its own parameter, deliberately separate
-        from payload, rather than read off payload.company_code: the
-        public CompanyRegisterRequest has no such field at all (see its
-        own docstring), so public self-registration - the route calls this
-        with company_code left at its default None - can never pass one
-        through, structurally, not just by convention. Only
-        PlatformService.create_company passes an explicit company_code
-        (from PlatformCompanyRegisterRequest), for System Administrator
-        provisioning. When None, a freshly generated one comes from
-        _generate_unique_company_code, which does its own uniqueness
-        pre-check internally; when supplied, it's pre-checked below
-        instead.
+        company_code is normally generated here from the company name
+        (_generate_unique_company_code, which does its own uniqueness
+        pre-check). Neither request schema has a company_code field and
+        neither HTTP caller - public self-registration and System
+        Administrator provisioning (PlatformService.create_company) - passes
+        this keyword-only parameter, so no user can choose or override a
+        code. It exists only for trusted server-side scripts that need a
+        fixed, well-known code (seed_demo_data.py's DEMO001); a supplied
+        code is pre-checked below instead.
 
         send_welcome_email is keyword-only and defaults to False
         deliberately: the "here's your company code" email is specific to
@@ -249,7 +260,7 @@ class CompanyService:
             ):
                 raise CompanyCodeConflictError
         else:
-            company_code = self._generate_unique_company_code()
+            company_code = self._generate_unique_company_code(payload.company_name)
 
         role = self._role_repository.get_by_name(_COMPANY_ADMIN_ROLE_NAME)
         if role is None:
@@ -293,9 +304,10 @@ class CompanyService:
 
             self._db.commit()
         except IntegrityError as exc:
-            # Defense in depth: a concurrent request could pass the
-            # company_code check above and lose the race to the database's
-            # own unique constraint - the only unique constraint anything
+            # Defense in depth: a concurrent registration could take the
+            # same company_code between the pre-check above and this
+            # insert, losing the race to the database's own unique
+            # constraint - the only unique constraint anything
             # in this method can actually hit (see the docstring above on
             # why username/email can't conflict for a brand new company).
             self._db.rollback()
@@ -320,32 +332,21 @@ class CompanyService:
         omitted field (leave unchanged) from one explicitly sent as null
         (e.g. clearing contact_email), which a plain `is not None` check
         can't do.
+
+        company_code is deliberately not editable (CompanyUpdateRequest
+        has no such field): it is generated by the backend at registration
+        and stays the company's code from then on.
         """
         company = self.get_company(company_id)
         fields_set = payload.model_fields_set
 
-        if "company_code" in fields_set and payload.company_code is not None:
-            if payload.company_code.lower() != company.company_code.lower():
-                if _is_reserved_company_code(payload.company_code):
-                    raise CompanyCodeConflictError
-                existing = self._company_repository.get_by_code(payload.company_code)
-                if existing is not None and existing.id != company_id:
-                    raise CompanyCodeConflictError
-                company.company_code = payload.company_code
         if "name" in fields_set and payload.name is not None:
             company.name = payload.name
         if "contact_email" in fields_set:
             company.contact_email = payload.contact_email
 
-        try:
-            self._company_repository.update(company)
-            self._db.commit()
-        except IntegrityError as exc:
-            # Defense in depth: a concurrent request could pass the
-            # company_code check above and lose the race to the database's
-            # own unique constraint.
-            self._db.rollback()
-            raise CompanyCodeConflictError from exc
+        self._company_repository.update(company)
+        self._db.commit()
         return company
 
     def upload_logo(
@@ -394,30 +395,29 @@ class CompanyService:
             raise LogoNotFoundError
         return company.logo_path, self._storage_service.load(company.logo_path)
 
-    def _generate_unique_company_code(self) -> str:
-        """Generates a platform-unique company_code for a registration that
-        didn't supply one. Tries a handful of random candidates
-        (_generate_company_code_candidate), pre-checking each against the
-        database via the exact same get_by_code lookup the caller-supplied-
-        code path above uses, and returns the first one that isn't already
-        taken. See _COMPANY_CODE_MAX_GENERATION_ATTEMPTS's own comment for
-        why collision resistance is already overwhelming well before this
-        loop would ever exhaust its attempts - the RuntimeError below is a
-        loud failure for an effectively unreachable case, not a real
-        operational path. The database's own UNIQUE constraint on
-        company_code is still the final guarantee even here: if a genuine
-        race loses against a concurrent registration that grabbed the same
-        candidate between this check and the insert, register_company's own
-        IntegrityError handling below catches it exactly like it already
-        does for a caller-supplied code.
+    def _generate_unique_company_code(self, company_name: str) -> str:
+        """Generates a platform-unique "IT-{NAME}-{DIGITS}" company_code for
+        a new company. Tries one candidate per entry of
+        _COMPANY_CODE_SUFFIX_DIGITS (widening the numeric suffix after
+        repeated collisions), pre-checking each with the same
+        case-insensitive get_by_code lookup login uses, and returns the
+        first one that is neither taken nor reserved. The RuntimeError
+        below is a loud failure for an effectively unreachable case, not a
+        real operational path. The database's own UNIQUE constraint on
+        company_code is still the final guarantee: if a concurrent
+        registration grabs the same candidate between this check and the
+        insert, register_company's own IntegrityError handling catches it.
         """
-        for _ in range(_COMPANY_CODE_MAX_GENERATION_ATTEMPTS):
-            candidate = _generate_company_code_candidate()
-            if self._company_repository.get_by_code(candidate) is None:
+        for digits in _COMPANY_CODE_SUFFIX_DIGITS:
+            candidate = _generate_company_code_candidate(company_name, digits)
+            if (
+                not _is_reserved_company_code(candidate)
+                and self._company_repository.get_by_code(candidate) is None
+            ):
                 return candidate
         raise RuntimeError(
             "Could not generate a unique company code after "
-            f"{_COMPANY_CODE_MAX_GENERATION_ATTEMPTS} attempts"
+            f"{len(_COMPANY_CODE_SUFFIX_DIGITS)} attempts"
         )
 
     def _send_welcome_email_best_effort(

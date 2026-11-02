@@ -53,14 +53,10 @@ export interface CompanyRegisterRequest {
 /**
  * POST /platform/companies request body
  * (backend/app/schemas/company.py - PlatformCompanyRegisterRequest).
- * System-Administrator-only: extends the public registration fields with a
- * required company_code, since a System Administrator provisioning a
- * tenant on a customer's behalf chooses it explicitly (see
- * PlatformCreateCompanyPage).
+ * System-Administrator-only. Same fields as public registration - no
+ * company_code: the backend generates it in both flows.
  */
-export interface PlatformCompanyRegisterRequest extends CompanyRegisterRequest {
-  company_code: string;
-}
+export type PlatformCompanyRegisterRequest = CompanyRegisterRequest;
 
 /**
  * POST /companies/register response body - the same tokens as TokenResponse,

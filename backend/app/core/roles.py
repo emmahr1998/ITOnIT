@@ -25,6 +25,7 @@ COMPANY_ROLE_NAMES: tuple[str, ...] = (
 
 # The dedicated internal organization the System Administrator belongs to.
 # Valid under validate_company_code_format, and can never collide with an
-# auto-generated code (those always start with "IT-").
+# auto-generated code (those always start with "IT-"; the generator also
+# skips reserved codes explicitly).
 PLATFORM_COMPANY_NAME = "ITOnIT Platform Administration"
 PLATFORM_COMPANY_CODE = "ITONIT-SYSTEM"
